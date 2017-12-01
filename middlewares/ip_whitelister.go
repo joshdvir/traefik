@@ -40,7 +40,7 @@ func NewIPWhitelister(whitelistStrings []string) (*IPWhiteLister, error) {
 }
 
 func (wl *IPWhiteLister) handle(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-	ipAddress, _, err := ipFromRemoteAddr(r)
+	ipAddress, err := ipFromRemoteAddr(r)
 	if err != nil {
 		log.Warnf("unable to parse remote-address from header: %s - rejecting", r.RemoteAddr)
 		reject(w)
