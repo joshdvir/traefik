@@ -6,6 +6,7 @@ const (
 	XForwardedHost         = "X-Forwarded-Host"
 	XForwardedPort         = "X-Forwarded-Port"
 	XForwardedServer       = "X-Forwarded-Server"
+	XRealIp                = "X-Real-Ip"
 	Connection             = "Connection"
 	KeepAlive              = "Keep-Alive"
 	ProxyAuthenticate      = "Proxy-Authenticate"
@@ -15,7 +16,6 @@ const (
 	TransferEncoding       = "Transfer-Encoding"
 	Upgrade                = "Upgrade"
 	ContentLength          = "Content-Length"
-	ContentType            = "Content-Type"
 	SecWebsocketKey        = "Sec-Websocket-Key"
 	SecWebsocketVersion    = "Sec-Websocket-Version"
 	SecWebsocketExtensions = "Sec-Websocket-Extensions"
@@ -49,4 +49,13 @@ var WebsocketUpgradeHeaders = []string{
 	Upgrade,
 	Connection,
 	SecWebsocketAccept,
+}
+
+var XHeaders = []string{
+	XForwardedProto,
+	XForwardedFor,
+	XForwardedHost,
+	XForwardedPort,
+	XForwardedServer,
+	XRealIp,
 }

@@ -10,68 +10,69 @@ import (
 	docker "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestDockerGetFrontendName(t *testing.T) {
-	containers := []struct {
+	testCases := []struct {
 		container docker.ContainerJSON
 		expected  string
 	}{
 		{
 			container: containerJSON(name("foo")),
-			expected:  "Host-foo-docker-localhost",
+			expected:  "Host-foo-docker-localhost-0",
 		},
 		{
 			container: containerJSON(labels(map[string]string{
 				types.LabelFrontendRule: "Headers:User-Agent,bat/0.1.0",
 			})),
-			expected: "Headers-User-Agent-bat-0-1-0",
+			expected: "Headers-User-Agent-bat-0-1-0-0",
 		},
 		{
 			container: containerJSON(labels(map[string]string{
 				"com.docker.compose.project": "foo",
 				"com.docker.compose.service": "bar",
 			})),
-			expected: "Host-bar-foo-docker-localhost",
+			expected: "Host-bar-foo-docker-localhost-0",
 		},
 		{
 			container: containerJSON(labels(map[string]string{
 				types.LabelFrontendRule: "Host:foo.bar",
 			})),
-			expected: "Host-foo-bar",
+			expected: "Host-foo-bar-0",
 		},
 		{
 			container: containerJSON(labels(map[string]string{
 				types.LabelFrontendRule: "Path:/test",
 			})),
-			expected: "Path-test",
+			expected: "Path-test-0",
 		},
 		{
 			container: containerJSON(labels(map[string]string{
 				types.LabelFrontendRule: "PathPrefix:/test2",
 			})),
-			expected: "PathPrefix-test2",
+			expected: "PathPrefix-test2-0",
 		},
 	}
 
-	for containerID, e := range containers {
-		e := e
+	for containerID, test := range testCases {
+		test := test
 		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
 			t.Parallel()
-			dockerData := parseContainer(e.container)
+			dockerData := parseContainer(test.container)
 			provider := &Provider{
 				Domain: "docker.localhost",
 			}
-			actual := provider.getFrontendName(dockerData)
-			if actual != e.expected {
-				t.Errorf("expected %q, got %q", e.expected, actual)
+			actual := provider.getFrontendName(dockerData, 0)
+			if actual != test.expected {
+				t.Errorf("expected %q, got %q", test.expected, actual)
 			}
 		})
 	}
 }
 
 func TestDockerGetFrontendRule(t *testing.T) {
-	containers := []struct {
+	testCases := []struct {
 		container docker.ContainerJSON
 		expected  string
 	}{
@@ -103,24 +104,24 @@ func TestDockerGetFrontendRule(t *testing.T) {
 		},
 	}
 
-	for containerID, e := range containers {
-		e := e
+	for containerID, test := range testCases {
+		test := test
 		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
 			t.Parallel()
-			dockerData := parseContainer(e.container)
+			dockerData := parseContainer(test.container)
 			provider := &Provider{
 				Domain: "docker.localhost",
 			}
 			actual := provider.getFrontendRule(dockerData)
-			if actual != e.expected {
-				t.Errorf("expected %q, got %q", e.expected, actual)
+			if actual != test.expected {
+				t.Errorf("expected %q, got %q", test.expected, actual)
 			}
 		})
 	}
 }
 
 func TestDockerGetBackend(t *testing.T) {
-	containers := []struct {
+	testCases := []struct {
 		container docker.ContainerJSON
 		expected  string
 	}{
@@ -147,22 +148,21 @@ func TestDockerGetBackend(t *testing.T) {
 		},
 	}
 
-	for containerID, e := range containers {
-		e := e
+	for containerID, test := range testCases {
+		test := test
 		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
 			t.Parallel()
-			dockerData := parseContainer(e.container)
-			provider := &Provider{}
-			actual := provider.getBackend(dockerData)
-			if actual != e.expected {
-				t.Errorf("expected %q, got %q", e.expected, actual)
+			dockerData := parseContainer(test.container)
+			actual := getBackend(dockerData)
+			if actual != test.expected {
+				t.Errorf("expected %q, got %q", test.expected, actual)
 			}
 		})
 	}
 }
 
 func TestDockerGetIPAddress(t *testing.T) {
-	containers := []struct {
+	testCases := []struct {
 		container docker.ContainerJSON
 		expected  string
 	}{
@@ -197,24 +197,37 @@ func TestDockerGetIPAddress(t *testing.T) {
 			),
 			expected: "127.0.0.1",
 		},
+		{
+			container: containerJSON(
+				networkMode("host"),
+			),
+			expected: "127.0.0.1",
+		},
+		{
+			container: containerJSON(
+				networkMode("host"),
+				nodeIP("10.0.0.5"),
+			),
+			expected: "10.0.0.5",
+		},
 	}
 
-	for containerID, e := range containers {
-		e := e
+	for containerID, test := range testCases {
+		test := test
 		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
 			t.Parallel()
-			dockerData := parseContainer(e.container)
+			dockerData := parseContainer(test.container)
 			provider := &Provider{}
 			actual := provider.getIPAddress(dockerData)
-			if actual != e.expected {
-				t.Errorf("expected %q, got %q", e.expected, actual)
+			if actual != test.expected {
+				t.Errorf("expected %q, got %q", test.expected, actual)
 			}
 		})
 	}
 }
 
 func TestDockerGetPort(t *testing.T) {
-	containers := []struct {
+	testCases := []struct {
 		container docker.ContainerJSON
 		expected  string
 	}{
@@ -260,202 +273,13 @@ func TestDockerGetPort(t *testing.T) {
 		},
 	}
 
-	for containerID, e := range containers {
+	for containerID, e := range testCases {
 		e := e
 		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
 			t.Parallel()
 			dockerData := parseContainer(e.container)
-			provider := &Provider{}
-			actual := provider.getPort(dockerData)
+			actual := getPort(dockerData)
 			if actual != e.expected {
-				t.Errorf("expected %q, got %q", e.expected, actual)
-			}
-		})
-	}
-}
-
-func TestDockerGetWeight(t *testing.T) {
-	containers := []struct {
-		container docker.ContainerJSON
-		expected  string
-	}{
-		{
-			container: containerJSON(),
-			expected:  "0",
-		},
-		{
-			container: containerJSON(labels(map[string]string{
-				types.LabelWeight: "10",
-			})),
-			expected: "10",
-		},
-	}
-
-	for containerID, e := range containers {
-		e := e
-		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
-			t.Parallel()
-			dockerData := parseContainer(e.container)
-			provider := &Provider{}
-			actual := provider.getWeight(dockerData)
-			if actual != e.expected {
-				t.Errorf("expected %q, got %q", e.expected, actual)
-			}
-		})
-	}
-}
-
-func TestDockerGetDomain(t *testing.T) {
-	containers := []struct {
-		container docker.ContainerJSON
-		expected  string
-	}{
-		{
-			container: containerJSON(),
-			expected:  "docker.localhost",
-		},
-		{
-			container: containerJSON(labels(map[string]string{
-				types.LabelDomain: "foo.bar",
-			})),
-			expected: "foo.bar",
-		},
-	}
-
-	for containerID, e := range containers {
-		e := e
-		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
-			t.Parallel()
-			dockerData := parseContainer(e.container)
-			provider := &Provider{
-				Domain: "docker.localhost",
-			}
-			actual := provider.getDomain(dockerData)
-			if actual != e.expected {
-				t.Errorf("expected %q, got %q", e.expected, actual)
-			}
-		})
-	}
-}
-
-func TestDockerGetProtocol(t *testing.T) {
-	containers := []struct {
-		container docker.ContainerJSON
-		expected  string
-	}{
-		{
-			container: containerJSON(),
-			expected:  "http",
-		},
-		{
-			container: containerJSON(labels(map[string]string{
-				types.LabelProtocol: "https",
-			})),
-			expected: "https",
-		},
-	}
-
-	for containerID, e := range containers {
-		e := e
-		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
-			t.Parallel()
-			dockerData := parseContainer(e.container)
-			provider := &Provider{}
-			actual := provider.getProtocol(dockerData)
-			if actual != e.expected {
-				t.Errorf("expected %q, got %q", e.expected, actual)
-			}
-		})
-	}
-}
-
-func TestDockerGetPassHostHeader(t *testing.T) {
-	containers := []struct {
-		container docker.ContainerJSON
-		expected  string
-	}{
-		{
-			container: containerJSON(),
-			expected:  "true",
-		},
-		{
-			container: containerJSON(labels(map[string]string{
-				types.LabelFrontendPassHostHeader: "false",
-			})),
-			expected: "false",
-		},
-	}
-
-	for containerID, e := range containers {
-		e := e
-		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
-			t.Parallel()
-			dockerData := parseContainer(e.container)
-			provider := &Provider{}
-			actual := provider.getPassHostHeader(dockerData)
-			if actual != e.expected {
-				t.Errorf("expected %q, got %q", e.expected, actual)
-			}
-		})
-	}
-}
-
-func TestDockerGetWhitelistSourceRange(t *testing.T) {
-	containers := []struct {
-		desc      string
-		container docker.ContainerJSON
-		expected  []string
-	}{
-		{
-			desc:      "no whitelist-label",
-			container: containerJSON(),
-			expected:  nil,
-		},
-		{
-			desc: "whitelist-label with empty string",
-			container: containerJSON(labels(map[string]string{
-				types.LabelTraefikFrontendWhitelistSourceRange: "",
-			})),
-			expected: nil,
-		},
-		{
-			desc: "whitelist-label with IPv4 mask",
-			container: containerJSON(labels(map[string]string{
-				types.LabelTraefikFrontendWhitelistSourceRange: "1.2.3.4/16",
-			})),
-			expected: []string{
-				"1.2.3.4/16",
-			},
-		},
-		{
-			desc: "whitelist-label with IPv6 mask",
-			container: containerJSON(labels(map[string]string{
-				types.LabelTraefikFrontendWhitelistSourceRange: "fe80::/16",
-			})),
-			expected: []string{
-				"fe80::/16",
-			},
-		},
-		{
-			desc: "whitelist-label with multiple masks",
-			container: containerJSON(labels(map[string]string{
-				types.LabelTraefikFrontendWhitelistSourceRange: "1.1.1.1/24, 1234:abcd::42/32",
-			})),
-			expected: []string{
-				"1.1.1.1/24",
-				"1234:abcd::42/32",
-			},
-		},
-	}
-
-	for _, e := range containers {
-		e := e
-		t.Run(e.desc, func(t *testing.T) {
-			t.Parallel()
-			dockerData := parseContainer(e.container)
-			provider := &Provider{}
-			actual := provider.getWhitelistSourceRange(dockerData)
-			if !reflect.DeepEqual(actual, e.expected) {
 				t.Errorf("expected %q, got %q", e.expected, actual)
 			}
 		})
@@ -479,15 +303,15 @@ func TestDockerGetLabel(t *testing.T) {
 		},
 	}
 
-	for containerID, e := range containers {
-		e := e
+	for containerID, test := range containers {
+		test := test
 		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
 			t.Parallel()
-			dockerData := parseContainer(e.container)
+			dockerData := parseContainer(test.container)
 			label, err := getLabel(dockerData, "foo")
-			if e.expected != "" {
-				if err == nil || !strings.Contains(err.Error(), e.expected) {
-					t.Errorf("expected an error with %q, got %v", e.expected, err)
+			if test.expected != "" {
+				if err == nil || !strings.Contains(err.Error(), test.expected) {
+					t.Errorf("expected an error with %q, got %v", test.expected, err)
 				}
 			} else {
 				if label != "bar" {
@@ -499,7 +323,7 @@ func TestDockerGetLabel(t *testing.T) {
 }
 
 func TestDockerGetLabels(t *testing.T) {
-	containers := []struct {
+	testCases := []struct {
 		container      docker.ContainerJSON
 		expectedLabels map[string]string
 		expectedError  string
@@ -531,18 +355,18 @@ func TestDockerGetLabels(t *testing.T) {
 		},
 	}
 
-	for containerID, e := range containers {
-		e := e
+	for containerID, test := range testCases {
+		test := test
 		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
 			t.Parallel()
-			dockerData := parseContainer(e.container)
+			dockerData := parseContainer(test.container)
 			labels, err := getLabels(dockerData, []string{"foo", "bar"})
-			if !reflect.DeepEqual(labels, e.expectedLabels) {
-				t.Errorf("expect %v, got %v", e.expectedLabels, labels)
+			if !reflect.DeepEqual(labels, test.expectedLabels) {
+				t.Errorf("expect %v, got %v", test.expectedLabels, labels)
 			}
-			if e.expectedError != "" {
-				if err == nil || !strings.Contains(err.Error(), e.expectedError) {
-					t.Errorf("expected an error with %q, got %v", e.expectedError, err)
+			if test.expectedError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.expectedError) {
+					t.Errorf("expected an error with %q, got %v", test.expectedError, err)
 				}
 			}
 		})
@@ -550,7 +374,7 @@ func TestDockerGetLabels(t *testing.T) {
 }
 
 func TestDockerTraefikFilter(t *testing.T) {
-	containers := []struct {
+	testCases := []struct {
 		container docker.ContainerJSON
 		expected  bool
 		provider  *Provider
@@ -848,21 +672,21 @@ func TestDockerTraefikFilter(t *testing.T) {
 		},
 	}
 
-	for containerID, e := range containers {
-		e := e
+	for containerID, test := range testCases {
+		test := test
 		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
 			t.Parallel()
-			dockerData := parseContainer(e.container)
-			actual := e.provider.containerFilter(dockerData)
-			if actual != e.expected {
-				t.Errorf("expected %v for %+v, got %+v", e.expected, e, actual)
+			dockerData := parseContainer(test.container)
+			actual := test.provider.containerFilter(dockerData)
+			if actual != test.expected {
+				t.Errorf("expected %v for %+v, got %+v", test.expected, test, actual)
 			}
 		})
 	}
 }
 
 func TestDockerLoadDockerConfig(t *testing.T) {
-	cases := []struct {
+	testCases := []struct {
 		containers        []docker.ContainerJSON
 		expectedFrontends map[string]*types.Frontend
 		expectedBackends  map[string]*types.Backend
@@ -883,13 +707,14 @@ func TestDockerLoadDockerConfig(t *testing.T) {
 				),
 			},
 			expectedFrontends: map[string]*types.Frontend{
-				"frontend-Host-test-docker-localhost": {
+				"frontend-Host-test-docker-localhost-0": {
 					Backend:        "backend-test",
 					PassHostHeader: true,
 					EntryPoints:    []string{},
 					BasicAuth:      []string{},
+					Redirect:       "",
 					Routes: map[string]types.Route{
-						"route-frontend-Host-test-docker-localhost": {
+						"route-frontend-Host-test-docker-localhost-0": {
 							Rule: "Host:test.docker.localhost",
 						},
 					},
@@ -915,6 +740,7 @@ func TestDockerLoadDockerConfig(t *testing.T) {
 						types.LabelBackend:             "foobar",
 						types.LabelFrontendEntryPoints: "http,https",
 						types.LabelFrontendAuthBasic:   "test:$apr1$H6uskkkW$IgXLP6ewTrSuBkTrqE8wj/,test2:$apr1$d9hr9HBB$4HxwgUir3HP4EsggP/QNo0",
+						types.LabelFrontendRedirect:    "https",
 					}),
 					ports(nat.PortMap{
 						"80/tcp": {},
@@ -933,24 +759,26 @@ func TestDockerLoadDockerConfig(t *testing.T) {
 				),
 			},
 			expectedFrontends: map[string]*types.Frontend{
-				"frontend-Host-test1-docker-localhost": {
+				"frontend-Host-test1-docker-localhost-0": {
 					Backend:        "backend-foobar",
 					PassHostHeader: true,
 					EntryPoints:    []string{"http", "https"},
 					BasicAuth:      []string{"test:$apr1$H6uskkkW$IgXLP6ewTrSuBkTrqE8wj/", "test2:$apr1$d9hr9HBB$4HxwgUir3HP4EsggP/QNo0"},
+					Redirect:       "https",
 					Routes: map[string]types.Route{
-						"route-frontend-Host-test1-docker-localhost": {
+						"route-frontend-Host-test1-docker-localhost-0": {
 							Rule: "Host:test1.docker.localhost",
 						},
 					},
 				},
-				"frontend-Host-test2-docker-localhost": {
+				"frontend-Host-test2-docker-localhost-1": {
 					Backend:        "backend-foobar",
 					PassHostHeader: true,
 					EntryPoints:    []string{},
 					BasicAuth:      []string{},
+					Redirect:       "",
 					Routes: map[string]types.Route{
-						"route-frontend-Host-test2-docker-localhost": {
+						"route-frontend-Host-test2-docker-localhost-1": {
 							Rule: "Host:test2.docker.localhost",
 						},
 					},
@@ -991,13 +819,14 @@ func TestDockerLoadDockerConfig(t *testing.T) {
 				),
 			},
 			expectedFrontends: map[string]*types.Frontend{
-				"frontend-Host-test1-docker-localhost": {
+				"frontend-Host-test1-docker-localhost-0": {
 					Backend:        "backend-foobar",
 					PassHostHeader: true,
 					EntryPoints:    []string{"http", "https"},
 					BasicAuth:      []string{},
+					Redirect:       "",
 					Routes: map[string]types.Route{
-						"route-frontend-Host-test1-docker-localhost": {
+						"route-frontend-Host-test1-docker-localhost-0": {
 							Rule: "Host:test1.docker.localhost",
 						},
 					},
@@ -1026,13 +855,13 @@ func TestDockerLoadDockerConfig(t *testing.T) {
 		},
 	}
 
-	for caseID, c := range cases {
-		c := c
+	for caseID, test := range testCases {
+		test := test
 		t.Run(strconv.Itoa(caseID), func(t *testing.T) {
 			t.Parallel()
 			var dockerDataList []dockerData
-			for _, container := range c.containers {
-				dockerData := parseContainer(container)
+			for _, cont := range test.containers {
+				dockerData := parseContainer(cont)
 				dockerDataList = append(dockerDataList, dockerData)
 			}
 
@@ -1042,11 +871,99 @@ func TestDockerLoadDockerConfig(t *testing.T) {
 			}
 			actualConfig := provider.loadDockerConfig(dockerDataList)
 			// Compare backends
-			if !reflect.DeepEqual(actualConfig.Backends, c.expectedBackends) {
-				t.Errorf("expected %#v, got %#v", c.expectedBackends, actualConfig.Backends)
+			if !reflect.DeepEqual(actualConfig.Backends, test.expectedBackends) {
+				t.Errorf("expected %#v, got %#v", test.expectedBackends, actualConfig.Backends)
 			}
-			if !reflect.DeepEqual(actualConfig.Frontends, c.expectedFrontends) {
-				t.Errorf("expected %#v, got %#v", c.expectedFrontends, actualConfig.Frontends)
+			if !reflect.DeepEqual(actualConfig.Frontends, test.expectedFrontends) {
+				t.Errorf("expected %#v, got %#v", test.expectedFrontends, actualConfig.Frontends)
+			}
+		})
+	}
+}
+
+func TestDockerHasStickinessLabel(t *testing.T) {
+	testCases := []struct {
+		desc      string
+		container docker.ContainerJSON
+		expected  bool
+	}{
+		{
+			desc:      "no stickiness-label",
+			container: containerJSON(),
+			expected:  false,
+		},
+		{
+			desc: "stickiness true",
+			container: containerJSON(labels(map[string]string{
+				types.LabelBackendLoadbalancerStickiness: "true",
+			})),
+			expected: true,
+		},
+		{
+			desc: "stickiness false",
+			container: containerJSON(labels(map[string]string{
+				types.LabelBackendLoadbalancerStickiness: "false",
+			})),
+			expected: false,
+		},
+	}
+
+	for _, test := range testCases {
+		test := test
+		t.Run(test.desc, func(t *testing.T) {
+			t.Parallel()
+			dockerData := parseContainer(test.container)
+			actual := hasStickinessLabel(dockerData)
+			assert.Equal(t, actual, test.expected)
+		})
+	}
+}
+
+func TestDockerCheckPortLabels(t *testing.T) {
+	testCases := []struct {
+		container     docker.ContainerJSON
+		expectedError bool
+	}{
+		{
+			container: containerJSON(labels(map[string]string{
+				types.LabelPort: "80",
+			})),
+			expectedError: false,
+		},
+		{
+			container: containerJSON(labels(map[string]string{
+				types.LabelPrefix + "servicename.protocol": "http",
+				types.LabelPrefix + "servicename.port":     "80",
+			})),
+			expectedError: false,
+		},
+		{
+			container: containerJSON(labels(map[string]string{
+				types.LabelPrefix + "servicename.protocol": "http",
+				types.LabelPort:                            "80",
+			})),
+			expectedError: false,
+		},
+		{
+			container: containerJSON(labels(map[string]string{
+				types.LabelPrefix + "servicename.protocol": "http",
+			})),
+			expectedError: true,
+		},
+	}
+
+	for containerID, test := range testCases {
+		test := test
+		t.Run(strconv.Itoa(containerID), func(t *testing.T) {
+			t.Parallel()
+
+			dockerData := parseContainer(test.container)
+			err := checkServiceLabelPort(dockerData)
+
+			if test.expectedError && err == nil {
+				t.Error("expected an error but got nil")
+			} else if !test.expectedError && err != nil {
+				t.Errorf("expected no error, got %q", err)
 			}
 		})
 	}

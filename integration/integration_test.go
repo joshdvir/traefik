@@ -3,6 +3,7 @@ package integration
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -18,32 +19,50 @@ import (
 	checker "github.com/vdemeester/shakers"
 )
 
+var integration = flag.Bool("integration", false, "run integration tests")
+var container = flag.Bool("container", false, "run container integration tests")
+var host = flag.Bool("host", false, "run host integration tests")
+
 func Test(t *testing.T) {
 	check.TestingT(t)
 }
 
 func init() {
-	check.Suite(&AccessLogSuite{})
-	check.Suite(&AcmeSuite{})
-	check.Suite(&ConstraintSuite{})
-	check.Suite(&ConsulCatalogSuite{})
-	check.Suite(&ConsulSuite{})
-	check.Suite(&DockerSuite{})
-	check.Suite(&DynamoDBSuite{})
-	check.Suite(&ErrorPagesSuite{})
-	check.Suite(&EtcdSuite{})
-	check.Suite(&EurekaSuite{})
-	check.Suite(&FileSuite{})
-	check.Suite(&GRPCSuite{})
-	check.Suite(&HealthCheckSuite{})
-	check.Suite(&HTTPSSuite{})
-	check.Suite(&LogRotationSuite{})
-	check.Suite(&MarathonSuite{})
-	check.Suite(&MesosSuite{})
-	check.Suite(&RateLimitSuite{})
-	check.Suite(&SimpleSuite{})
-	check.Suite(&TimeoutSuite{})
-	check.Suite(&WebsocketSuite{})
+	flag.Parse()
+	if !*integration {
+		log.Info("Integration tests disabled.")
+		return
+	}
+
+	if *container {
+		// tests launched from a container
+		check.Suite(&AccessLogSuite{})
+		check.Suite(&AcmeSuite{})
+		check.Suite(&ConstraintSuite{})
+		check.Suite(&ConsulCatalogSuite{})
+		check.Suite(&ConsulSuite{})
+		check.Suite(&DockerSuite{})
+		check.Suite(&DynamoDBSuite{})
+		check.Suite(&EtcdSuite{})
+		check.Suite(&ErrorPagesSuite{})
+		check.Suite(&EurekaSuite{})
+		check.Suite(&FileSuite{})
+		check.Suite(&GRPCSuite{})
+		check.Suite(&HealthCheckSuite{})
+		check.Suite(&HTTPSSuite{})
+		check.Suite(&LogRotationSuite{})
+		check.Suite(&MarathonSuite{})
+		check.Suite(&MesosSuite{})
+		check.Suite(&RateLimitSuite{})
+		check.Suite(&SimpleSuite{})
+		check.Suite(&TimeoutSuite{})
+		check.Suite(&WebsocketSuite{})
+	}
+	if *host {
+		// tests launched from the host
+		check.Suite(&ProxyProtocolSuite{})
+		check.Suite(&Etcd3Suite{})
+	}
 }
 
 var traefikBinary = "../dist/traefik"

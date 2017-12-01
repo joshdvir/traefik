@@ -18,14 +18,14 @@ var _ provider.Provider = (*Provider)(nil)
 
 // Provider holds configurations of the provider.
 type Provider struct {
-	provider.BaseProvider     `mapstructure:",squash"`
-	APIConfiguration          `mapstructure:",squash"` // Provide backwards compatibility
-	API                       *APIConfiguration        `description:"Enable the Rancher API provider"`
-	Metadata                  *MetadataConfiguration   `description:"Enable the Rancher metadata service provider"`
-	Domain                    string                   `description:"Default domain used"`
-	RefreshSeconds            int                      `description:"Polling interval (in seconds)"`
-	ExposedByDefault          bool                     `description:"Expose services by default"`
-	EnableServiceHealthFilter bool                     `description:"Filter services with unhealthy states and inactive states"`
+	provider.BaseProvider     `mapstructure:",squash" export:"true"`
+	APIConfiguration          `mapstructure:",squash" export:"true"` // Provide backwards compatibility
+	API                       *APIConfiguration                      `description:"Enable the Rancher API provider" export:"true"`
+	Metadata                  *MetadataConfiguration                 `description:"Enable the Rancher metadata service provider" export:"true"`
+	Domain                    string                                 `description:"Default domain used"`
+	RefreshSeconds            int                                    `description:"Polling interval (in seconds)" export:"true"`
+	ExposedByDefault          bool                                   `description:"Expose services by default" export:"true"`
+	EnableServiceHealthFilter bool                                   `description:"Filter services with unhealthy states and inactive states" export:"true"`
 }
 
 type rancherData struct {
@@ -76,6 +76,13 @@ func (p *Provider) getBasicAuth(service rancherData) []string {
 	return []string{}
 }
 
+func (p *Provider) getRedirect(service rancherData) string {
+	if redirect, err := getServiceLabel(service, types.LabelFrontendRedirect); err == nil {
+		return redirect
+	}
+	return ""
+}
+
 func (p *Provider) getFrontendName(service rancherData) string {
 	// Replace '.' with '-' in quoted keys because of this issue https://github.com/BurntSushi/toml/issues/78
 	return provider.Normalize(p.getFrontendRule(service))
@@ -92,10 +99,10 @@ func (p *Provider) getLoadBalancerMethod(service rancherData) string {
 func (p *Provider) hasLoadBalancerLabel(service rancherData) bool {
 	_, errMethod := getServiceLabel(service, types.LabelBackendLoadbalancerMethod)
 	_, errSticky := getServiceLabel(service, types.LabelBackendLoadbalancerSticky)
-	if errMethod != nil && errSticky != nil {
-		return false
-	}
-	return true
+	_, errStickiness := getServiceLabel(service, types.LabelBackendLoadbalancerStickiness)
+	_, errCookieName := getServiceLabel(service, types.LabelBackendLoadbalancerStickinessCookieName)
+
+	return errMethod == nil || errSticky == nil || errStickiness == nil || errCookieName == nil
 }
 
 func (p *Provider) hasCircuitBreakerLabel(service rancherData) bool {
@@ -114,9 +121,23 @@ func (p *Provider) getCircuitBreakerExpression(service rancherData) string {
 
 func (p *Provider) getSticky(service rancherData) string {
 	if _, err := getServiceLabel(service, types.LabelBackendLoadbalancerSticky); err == nil {
+		log.Warnf("Deprecated configuration found: %s. Please use %s.", types.LabelBackendLoadbalancerSticky, types.LabelBackendLoadbalancerStickiness)
 		return "true"
 	}
 	return "false"
+}
+
+func (p *Provider) hasStickinessLabel(service rancherData) bool {
+	labelStickiness, errStickiness := getServiceLabel(service, types.LabelBackendLoadbalancerStickiness)
+
+	return errStickiness == nil && len(labelStickiness) > 0 && strings.EqualFold(strings.TrimSpace(labelStickiness), "true")
+}
+
+func (p *Provider) getStickinessCookieName(service rancherData) string {
+	if label, err := getServiceLabel(service, types.LabelBackendLoadbalancerStickinessCookieName); err == nil {
+		return label
+	}
+	return ""
 }
 
 func (p *Provider) getBackend(service rancherData) string {
@@ -223,12 +244,13 @@ func (p *Provider) loadRancherConfig(services []rancherData) *types.Configuratio
 		"getMaxConnAmount":            p.getMaxConnAmount,
 		"getMaxConnExtractorFunc":     p.getMaxConnExtractorFunc,
 		"getSticky":                   p.getSticky,
+		"hasStickinessLabel":          p.hasStickinessLabel,
+		"getStickinessCookieName":     p.getStickinessCookieName,
+		"getRedirect":                 p.getRedirect,
 	}
 
 	// filter services
-	filteredServices := fun.Filter(func(service rancherData) bool {
-		return p.serviceFilter(service)
-	}, services).([]rancherData)
+	filteredServices := fun.Filter(p.serviceFilter, services).([]rancherData)
 
 	frontends := map[string]rancherData{}
 	backends := map[string]rancherData{}
@@ -254,6 +276,7 @@ func (p *Provider) loadRancherConfig(services []rancherData) *types.Configuratio
 	if err != nil {
 		log.Error(err)
 	}
+
 	return configuration
 
 }

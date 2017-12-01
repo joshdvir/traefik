@@ -66,6 +66,9 @@ cd ~/go/src/github.com/containous/traefik
 go get github.com/jteeuwen/go-bindata/...
 
 # Start build
+
+# generate
+# (required to merge non-code components into the final binary, such as the web dashboard and provider's Go templates)
 go generate
 
 # Standard go build
@@ -74,6 +77,10 @@ go build ./cmd/traefik
 ```
 
 You will find the Træfik executable in the `~/go/src/github.com/containous/traefik` folder as `traefik`.
+
+### Updating the templates
+
+If you happen to update the provider templates (in `/templates`), you need to run `go generate` to update the `autogen` package.
 
 ### Setting up `glide` and `glide-vc` for dependency management
 
@@ -138,14 +145,35 @@ More: https://labix.org/gocheck
 
 #### Method 2: `go`
 
-- Tests can be run from the cloned directory, by `$ go test ./...` which should return `ok` similar to:
+Unit tests can be run from the cloned directory by `$ go test ./...` which should return `ok` similar to:
 ```
 ok      _/home/user/go/src/github/containous/traefik    0.004s
 ```
 
+Integration tests must be run from the `integration/` directory and require the `-integration` switch to be passed like this: `$ cd integration && go test -integration ./...`.
+
 ## Documentation
 
 The [documentation site](http://docs.traefik.io/) is built with [mkdocs](http://mkdocs.org/)
+
+### Method 1: `Docker` and `make`
+
+You can test documentation using the `docs` target.
+
+```bash
+$ make docs
+docker build -t traefik-docs -f docs.Dockerfile .
+# […]
+docker run  --rm -v /home/user/go/github/containous/traefik:/mkdocs -p 8000:8000 traefik-docs mkdocs serve
+# […]
+[I 170828 20:47:48 server:283] Serving on http://0.0.0.0:8000
+[I 170828 20:47:48 handlers:60] Start watching changes
+[I 170828 20:47:48 handlers:62] Start detecting changes
+```
+
+And go to [http://127.0.0.1:8000](http://127.0.0.1:8000).
+
+### Method 2: `mkdocs`
 
 First make sure you have python and pip installed
 

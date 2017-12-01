@@ -9,6 +9,10 @@
     [backends.backend-{{$backendName}}.loadbalancer]
       method = "{{getLoadBalancerMethod $backend}}"
       sticky = {{getSticky $backend}}
+      {{if hasStickinessLabel $backend}}
+      [backends.backend-{{$backendName}}.loadbalancer.stickiness]
+        cookieName = "{{getStickinessCookieName $backend}}"
+      {{end}}
     {{end}}
 
     {{if hasMaxConnLabels $backend}}
@@ -30,6 +34,7 @@
     backend = "backend-{{getBackend $service}}"
     passHostHeader = {{getPassHostHeader $service}}
     priority = {{getPriority $service}}
+    redirect = "{{getRedirect $service}}"
     entryPoints = [{{range getEntryPoints $service}}
         "{{.}}",
     {{end}}]

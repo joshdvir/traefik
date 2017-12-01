@@ -12,6 +12,7 @@
 
 {{range $app := $apps}}
 {{range $serviceIndex, $serviceName := getServiceNames $app}}
+[backends."backend{{getBackend $app $serviceName }}"]
 {{ if hasMaxConnLabels $app }}
       [backends."backend{{getBackend $app $serviceName }}".maxconn]
         amount = {{getMaxConnAmount $app }}
@@ -21,6 +22,10 @@
       [backends."backend{{getBackend $app $serviceName }}".loadbalancer]
         method = "{{getLoadBalancerMethod $app }}"
         sticky = {{getSticky $app}}
+        {{if hasStickinessLabel $app}}
+        [backends."backend{{getBackend $app $serviceName }}".loadbalancer.stickiness]
+          cookieName = "{{getStickinessCookieName $app}}"
+        {{end}}
 {{end}}
 {{ if hasCircuitBreakerLabels $app }}
       [backends."backend{{getBackend $app $serviceName }}".circuitbreaker]

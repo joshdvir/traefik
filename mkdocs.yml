@@ -2,6 +2,7 @@ site_name: Træfik
 site_description: Træfik Documentation
 site_author: containo.us
 site_url: https://docs.traefik.io
+dev_addr: 0.0.0.0:8000
 
 repo_name: 'GitHub'
 repo_url: 'https://github.com/containous/traefik'
@@ -83,7 +84,12 @@ pages:
     - 'Backend: Marathon': 'configuration/backends/marathon.md'
     - 'Backend: Mesos': 'configuration/backends/mesos.md'
     - 'Backend: Rancher': 'configuration/backends/rancher.md'
+    - 'Backend: Rest': 'configuration/backends/rest.md'
+    - 'Backend: Service Fabric': 'configuration/backends/servicefabric.md'
     - 'Backend: Zookeeper': 'configuration/backends/zookeeper.md'
+    - 'API / Dashboard': 'configuration/api.md'
+    - 'Ping': 'configuration/ping.md'
+    - 'Metrics': 'configuration/metrics.md'
   - User Guides:
     - 'Configuration Examples': 'user-guide/examples.md'
     - 'Swarm Mode Cluster': 'user-guide/swarm-mode.md'
@@ -95,3 +101,4 @@ pages:
     - 'Clustering/HA': 'user-guide/cluster.md'
     - 'gRPC Example': 'user-guide/grpc.md'
   - Benchmarks: benchmarks.md
+  - 'Archive': 'archive.md'
