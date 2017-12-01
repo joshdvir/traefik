@@ -85,8 +85,8 @@ func ipFromRemoteAddr(req *http.Request) (string, error) {
 		parts := strings.Split(hdrForwardedFor, ",")
 		for _, part := range parts {
 			ip := strings.TrimSpace(part)
-			if ip != nil {
-				return &ip, nil
+			if ip != "" {
+				return ip, nil
 			}
 		}
 	}
@@ -95,8 +95,8 @@ func ipFromRemoteAddr(req *http.Request) (string, error) {
 	hdrRealIP := hdr.Get("X-Real-Ip")
 	if hdrRealIP != "" {
 		ip := hdrRealIP
-		if ip != nil {
-			return &ip, nil
+		if ip != "" {
+			return ip, nil
 		}
 	}
 
@@ -104,16 +104,16 @@ func ipFromRemoteAddr(req *http.Request) (string, error) {
 	// Remote Address in Go's HTTP server is in the form host:port so we need to split that first.
 	ip, _, err := net.SplitHostPort(req.RemoteAddr)
 	if err != nil {
-		return nil, fmt.Errorf("can't extract IP/Port from address %s: %s", req.RemoteAddr, err)
+		return "", fmt.Errorf("can't extract IP/Port from address %s: %s", req.RemoteAddr, err)
 	}
 
 	// Fallback if Remote Address was just IP.
 	userIP := ip
-	if userIP == nil {
-		return nil, fmt.Errorf("can't parse IP from address %s", ip)
+	if userIP == "" {
+		return "", fmt.Errorf("can't parse IP from address %s", ip)
 	}
 
-	return &userIP, nil
+	return userIP, nil
 }
 
 // func (whitelister *IPWhitelister) ServeHTTP(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
