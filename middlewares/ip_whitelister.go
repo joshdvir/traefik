@@ -75,7 +75,7 @@ func reject(w http.ResponseWriter) {
 	w.Write([]byte(http.StatusText(statusCode)))
 }
 
-func ipFromRemoteAddr(req *http.Request) (*net.IP, error) {
+func ipFromRemoteAddr(req *http.Request) (string, error) {
 	hdr := req.Header
 	// First check the X-Forwarded-For header for requests via proxy.
 	hdrForwardedFor := hdr.Get("X-Forwarded-For")
@@ -84,7 +84,7 @@ func ipFromRemoteAddr(req *http.Request) (*net.IP, error) {
 		// Use the first valid one.
 		parts := strings.Split(hdrForwardedFor, ",")
 		for _, part := range parts {
-			ip := net.ParseIP(strings.TrimSpace(part))
+			ip := strings.TrimSpace(part)
 			if ip != nil {
 				return &ip, nil
 			}
@@ -94,7 +94,7 @@ func ipFromRemoteAddr(req *http.Request) (*net.IP, error) {
 	// Try the X-Real-Ip header.
 	hdrRealIP := hdr.Get("X-Real-Ip")
 	if hdrRealIP != "" {
-		ip := net.ParseIP(hdrRealIP)
+		ip := hdrRealIP
 		if ip != nil {
 			return &ip, nil
 		}
@@ -108,7 +108,7 @@ func ipFromRemoteAddr(req *http.Request) (*net.IP, error) {
 	}
 
 	// Fallback if Remote Address was just IP.
-	userIP := net.ParseIP(ip)
+	userIP := ip
 	if userIP == nil {
 		return nil, fmt.Errorf("can't parse IP from address %s", ip)
 	}
