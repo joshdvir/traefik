@@ -76,7 +76,7 @@ func NewDataStore(ctx context.Context, kvSource staert.KvSource, object Object, 
 
 func (d *Datastore) watchChanges() error {
 	stopCh := make(chan struct{})
-	kvCh, err := d.kv.Watch(d.lockKey, stopCh)
+	kvCh, err := d.kv.Watch(d.lockKey, stopCh, nil)
 	if err != nil {
 		return err
 	}
@@ -119,19 +119,8 @@ func (d *Datastore) watchChanges() error {
 
 func (d *Datastore) reload() error {
 	log.Debug("Datastore reload")
-	d.localLock.Lock()
-	err := d.kv.LoadConfig(d.meta)
-	if err != nil {
-		d.localLock.Unlock()
-		return err
-	}
-	err = d.meta.unmarshall()
-	if err != nil {
-		d.localLock.Unlock()
-		return err
-	}
-	d.localLock.Unlock()
-	return nil
+	_, err := d.Load()
+	return err
 }
 
 // Begin creates a transaction with the KV store.
@@ -199,6 +188,10 @@ func (d *Datastore) get() *Metadata {
 func (d *Datastore) Load() (Object, error) {
 	d.localLock.Lock()
 	defer d.localLock.Unlock()
+
+	// clear Object first, as mapstructure's decoder doesn't have ZeroFields set to true for merging purposes
+	d.meta.Object = d.meta.Object[:0]
+
 	err := d.kv.LoadConfig(d.meta)
 	if err != nil {
 		return nil, err

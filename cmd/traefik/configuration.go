@@ -4,28 +4,33 @@ import (
 	"time"
 
 	"github.com/containous/flaeg"
+	"github.com/containous/traefik-extra-service-fabric"
+	"github.com/containous/traefik/api"
 	"github.com/containous/traefik/configuration"
 	"github.com/containous/traefik/middlewares/accesslog"
+	"github.com/containous/traefik/ping"
 	"github.com/containous/traefik/provider/boltdb"
 	"github.com/containous/traefik/provider/consul"
 	"github.com/containous/traefik/provider/docker"
 	"github.com/containous/traefik/provider/dynamodb"
 	"github.com/containous/traefik/provider/ecs"
 	"github.com/containous/traefik/provider/etcd"
+	"github.com/containous/traefik/provider/eureka"
 	"github.com/containous/traefik/provider/file"
 	"github.com/containous/traefik/provider/kubernetes"
 	"github.com/containous/traefik/provider/marathon"
 	"github.com/containous/traefik/provider/mesos"
 	"github.com/containous/traefik/provider/rancher"
-	"github.com/containous/traefik/provider/web"
+	"github.com/containous/traefik/provider/rest"
 	"github.com/containous/traefik/provider/zk"
 	"github.com/containous/traefik/types"
+	sf "github.com/jjcollinge/servicefabric"
 )
 
 // TraefikConfiguration holds GlobalConfiguration and other stuff
 type TraefikConfiguration struct {
-	configuration.GlobalConfiguration `mapstructure:",squash"`
-	ConfigFile                        string `short:"c" description:"Configuration file to use (TOML)."`
+	configuration.GlobalConfiguration `mapstructure:",squash" export:"true"`
+	ConfigFile                        string `short:"c" description:"Configuration file to use (TOML)." export:"true"`
 }
 
 // NewTraefikDefaultPointersConfiguration creates a TraefikConfiguration with pointers default values
@@ -42,14 +47,18 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 	defaultFile.Watch = true
 	defaultFile.Filename = "" //needs equivalent to  viper.ConfigFileUsed()
 
-	// default Web
-	var defaultWeb web.Provider
+	// default Rest
+	var defaultRest rest.Provider
+	defaultRest.EntryPoint = configuration.DefaultInternalEntryPointName
+
+	// TODO: Deprecated - Web provider, use REST provider instead
+	var defaultWeb configuration.WebCompatibility
 	defaultWeb.Address = ":8080"
 	defaultWeb.Statistics = &types.Statistics{
 		RecentErrors: 10,
 	}
 
-	// default Metrics
+	// TODO: Deprecated - default Metrics
 	defaultWeb.Metrics = &types.Metrics{
 		Prometheus: &types.Prometheus{
 			Buckets: types.Buckets{0.1, 0.3, 1.2, 5},
@@ -60,6 +69,10 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 		},
 		StatsD: &types.Statsd{
 			Address:      "localhost:8125",
+			PushInterval: "10s",
+		},
+		InfluxDB: &types.InfluxDB{
+			Address:      "localhost:8089",
 			PushInterval: "10s",
 		},
 	}
@@ -148,30 +161,108 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 	defaultDynamoDB.TableName = "traefik"
 	defaultDynamoDB.Watch = true
 
+	// default Eureka
+	var defaultEureka eureka.Provider
+	defaultEureka.Delay = "30s"
+
+	// default ServiceFabric
+	var defaultServiceFabric servicefabric.Provider
+	defaultServiceFabric.APIVersion = sf.DefaultAPIVersion
+	defaultServiceFabric.RefreshSeconds = 10
+
+	// default Ping
+	var defaultPing = ping.Handler{
+		EntryPoint: "traefik",
+	}
+
+	// default TraefikLog
+	defaultTraefikLog := types.TraefikLog{
+		Format:   "common",
+		FilePath: "",
+	}
+
 	// default AccessLog
 	defaultAccessLog := types.AccessLog{
 		Format:   accesslog.CommonFormat,
 		FilePath: "",
 	}
 
+	// default HealthCheckConfig
+	healthCheck := configuration.HealthCheckConfig{
+		Interval: flaeg.Duration(configuration.DefaultHealthCheckInterval),
+	}
+
+	// default RespondingTimeouts
+	respondingTimeouts := configuration.RespondingTimeouts{
+		IdleTimeout: flaeg.Duration(configuration.DefaultIdleTimeout),
+	}
+
+	// default ForwardingTimeouts
+	forwardingTimeouts := configuration.ForwardingTimeouts{
+		DialTimeout: flaeg.Duration(configuration.DefaultDialTimeout),
+	}
+
+	// default LifeCycle
+	defaultLifeCycle := configuration.LifeCycle{
+		GraceTimeOut: flaeg.Duration(configuration.DefaultGraceTimeout),
+	}
+
+	// default ApiConfiguration
+	defaultAPI := api.Handler{
+		EntryPoint: "traefik",
+		Dashboard:  true,
+	}
+	defaultAPI.Statistics = &types.Statistics{
+		RecentErrors: 10,
+	}
+
+	// default Metrics
+	defaultMetrics := types.Metrics{
+		Prometheus: &types.Prometheus{
+			Buckets:    types.Buckets{0.1, 0.3, 1.2, 5},
+			EntryPoint: "traefik",
+		},
+		Datadog: &types.Datadog{
+			Address:      "localhost:8125",
+			PushInterval: "10s",
+		},
+		StatsD: &types.Statsd{
+			Address:      "localhost:8125",
+			PushInterval: "10s",
+		},
+		InfluxDB: &types.InfluxDB{
+			Address:      "localhost:8089",
+			PushInterval: "10s",
+		},
+	}
+
 	defaultConfiguration := configuration.GlobalConfiguration{
-		Docker:        &defaultDocker,
-		File:          &defaultFile,
-		Web:           &defaultWeb,
-		Marathon:      &defaultMarathon,
-		Consul:        &defaultConsul,
-		ConsulCatalog: &defaultConsulCatalog,
-		Etcd:          &defaultEtcd,
-		Zookeeper:     &defaultZookeeper,
-		Boltdb:        &defaultBoltDb,
-		Kubernetes:    &defaultKubernetes,
-		Mesos:         &defaultMesos,
-		ECS:           &defaultECS,
-		Rancher:       &defaultRancher,
-		DynamoDB:      &defaultDynamoDB,
-		Retry:         &configuration.Retry{},
-		HealthCheck:   &configuration.HealthCheckConfig{},
-		AccessLog:     &defaultAccessLog,
+		Docker:             &defaultDocker,
+		File:               &defaultFile,
+		Web:                &defaultWeb,
+		Rest:               &defaultRest,
+		Marathon:           &defaultMarathon,
+		Consul:             &defaultConsul,
+		ConsulCatalog:      &defaultConsulCatalog,
+		Etcd:               &defaultEtcd,
+		Zookeeper:          &defaultZookeeper,
+		Boltdb:             &defaultBoltDb,
+		Kubernetes:         &defaultKubernetes,
+		Mesos:              &defaultMesos,
+		ECS:                &defaultECS,
+		Rancher:            &defaultRancher,
+		Eureka:             &defaultEureka,
+		DynamoDB:           &defaultDynamoDB,
+		Retry:              &configuration.Retry{},
+		HealthCheck:        &healthCheck,
+		RespondingTimeouts: &respondingTimeouts,
+		ForwardingTimeouts: &forwardingTimeouts,
+		TraefikLog:         &defaultTraefikLog,
+		AccessLog:          &defaultAccessLog,
+		LifeCycle:          &defaultLifeCycle,
+		Ping:               &defaultPing,
+		API:                &defaultAPI,
+		Metrics:            &defaultMetrics,
 	}
 
 	return &TraefikConfiguration{
@@ -183,7 +274,6 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 func NewTraefikConfiguration() *TraefikConfiguration {
 	return &TraefikConfiguration{
 		GlobalConfiguration: configuration.GlobalConfiguration{
-			GraceTimeOut:              flaeg.Duration(10 * time.Second),
 			AccessLogsFile:            "",
 			TraefikLogsFile:           "",
 			LogLevel:                  "ERROR",
@@ -195,12 +285,6 @@ func NewTraefikConfiguration() *TraefikConfiguration {
 			IdleTimeout:               flaeg.Duration(0),
 			HealthCheck: &configuration.HealthCheckConfig{
 				Interval: flaeg.Duration(configuration.DefaultHealthCheckInterval),
-			},
-			RespondingTimeouts: &configuration.RespondingTimeouts{
-				IdleTimeout: flaeg.Duration(configuration.DefaultIdleTimeout),
-			},
-			ForwardingTimeouts: &configuration.ForwardingTimeouts{
-				DialTimeout: flaeg.Duration(configuration.DefaultDialTimeout),
 			},
 			CheckNewVersion: true,
 		},

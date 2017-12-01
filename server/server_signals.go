@@ -5,34 +5,40 @@ package server
 import (
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/containous/traefik/log"
 )
 
-func (server *Server) configureSignals() {
-	signal.Notify(server.signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
+func (s *Server) configureSignals() {
+	signal.Notify(s.signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGUSR1)
 }
 
-func (server *Server) listenSignals() {
+func (s *Server) listenSignals() {
 	for {
-		sig := <-server.signals
+		sig := <-s.signals
 		switch sig {
 		case syscall.SIGUSR1:
 			log.Infof("Closing and re-opening log files for rotation: %+v", sig)
 
-			if server.accessLoggerMiddleware != nil {
-				if err := server.accessLoggerMiddleware.Rotate(); err != nil {
+			if s.accessLoggerMiddleware != nil {
+				if err := s.accessLoggerMiddleware.Rotate(); err != nil {
 					log.Errorf("Error rotating access log: %s", err)
 				}
 			}
 
 			if err := log.RotateFile(); err != nil {
-				log.Errorf("Error rotating error log: %s", err)
+				log.Errorf("Error rotating traefik log: %s", err)
 			}
 		default:
 			log.Infof("I have to go... %+v", sig)
-			log.Info("Stopping server")
-			server.Stop()
+			reqAcceptGraceTimeOut := time.Duration(s.globalConfiguration.LifeCycle.RequestAcceptGraceTimeout)
+			if reqAcceptGraceTimeOut > 0 {
+				log.Infof("Waiting %s for incoming requests to cease", reqAcceptGraceTimeOut)
+				time.Sleep(reqAcceptGraceTimeOut)
+			}
+			log.Info("Stopping server gracefully")
+			s.Stop()
 		}
 	}
 }

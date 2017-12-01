@@ -28,12 +28,12 @@ var _ provider.Provider = (*CatalogProvider)(nil)
 
 // CatalogProvider holds configurations of the Consul catalog provider.
 type CatalogProvider struct {
-	provider.BaseProvider `mapstructure:",squash"`
+	provider.BaseProvider `mapstructure:",squash" export:"true"`
 	Endpoint              string `description:"Consul server endpoint"`
 	Domain                string `description:"Default domain used"`
-	ExposedByDefault      bool   `description:"Expose Consul services by default"`
-	Prefix                string `description:"Prefix used for Consul catalog tags"`
-	FrontEndRule          string `description:"Frontend rule used for Consul services"`
+	ExposedByDefault      bool   `description:"Expose Consul services by default" export:"true"`
+	Prefix                string `description:"Prefix used for Consul catalog tags" export:"true"`
+	FrontEndRule          string `description:"Frontend rule used for Consul services" export:"true"`
 	client                *api.Client
 	frontEndRuleTemplate  *template.Template
 }
@@ -77,9 +77,14 @@ func (a nodeSorter) Less(i int, j int) bool {
 	return lentr.Service.Port < rentr.Service.Port
 }
 
-func getChangedServiceKeys(currState map[string]Service, prevState map[string]Service) ([]string, []string) {
-	currKeySet := fun.Set(fun.Keys(currState).([]string)).(map[string]bool)
-	prevKeySet := fun.Set(fun.Keys(prevState).([]string)).(map[string]bool)
+func hasChanged(current map[string]Service, previous map[string]Service) bool {
+	addedServiceKeys, removedServiceKeys := getChangedServiceKeys(current, previous)
+	return len(removedServiceKeys) > 0 || len(addedServiceKeys) > 0 || hasNodeOrTagsChanged(current, previous)
+}
+
+func getChangedServiceKeys(current map[string]Service, previous map[string]Service) ([]string, []string) {
+	currKeySet := fun.Set(fun.Keys(current).([]string)).(map[string]bool)
+	prevKeySet := fun.Set(fun.Keys(previous).([]string)).(map[string]bool)
 
 	addedKeys := fun.Difference(currKeySet, prevKeySet).(map[string]bool)
 	removedKeys := fun.Difference(prevKeySet, currKeySet).(map[string]bool)
@@ -87,20 +92,23 @@ func getChangedServiceKeys(currState map[string]Service, prevState map[string]Se
 	return fun.Keys(addedKeys).([]string), fun.Keys(removedKeys).([]string)
 }
 
-func getChangedServiceNodeKeys(currState map[string]Service, prevState map[string]Service) ([]string, []string) {
-	var addedNodeKeys []string
-	var removedNodeKeys []string
-	for key, value := range currState {
-		if prevValue, ok := prevState[key]; ok {
-			addedKeys, removedKeys := getChangedHealthyKeys(value.Nodes, prevValue.Nodes)
-			addedNodeKeys = append(addedKeys)
-			removedNodeKeys = append(removedKeys)
+func hasNodeOrTagsChanged(current map[string]Service, previous map[string]Service) bool {
+	var added []string
+	var removed []string
+	for key, value := range current {
+		if prevValue, ok := previous[key]; ok {
+			addedNodesKeys, removedNodesKeys := getChangedStringKeys(value.Nodes, prevValue.Nodes)
+			added = append(added, addedNodesKeys...)
+			removed = append(removed, removedNodesKeys...)
+			addedTagsKeys, removedTagsKeys := getChangedStringKeys(value.Tags, prevValue.Tags)
+			added = append(added, addedTagsKeys...)
+			removed = append(removed, removedTagsKeys...)
 		}
 	}
-	return addedNodeKeys, removedNodeKeys
+	return len(added) > 0 || len(removed) > 0
 }
 
-func getChangedHealthyKeys(currState []string, prevState []string) ([]string, []string) {
+func getChangedStringKeys(currState []string, prevState []string) ([]string, []string) {
 	currKeySet := fun.Set(currState).(map[string]bool)
 	prevKeySet := fun.Set(prevState).(map[string]bool)
 
@@ -110,7 +118,7 @@ func getChangedHealthyKeys(currState []string, prevState []string) ([]string, []
 	return fun.Keys(addedKeys).([]string), fun.Keys(removedKeys).([]string)
 }
 
-func (p *CatalogProvider) watchHealthState(stopCh <-chan struct{}, watchCh chan<- map[string][]string) {
+func (p *CatalogProvider) watchHealthState(stopCh <-chan struct{}, watchCh chan<- map[string][]string, errorCh chan<- error) {
 	health := p.client.Health()
 	catalog := p.client.Catalog()
 
@@ -131,6 +139,7 @@ func (p *CatalogProvider) watchHealthState(stopCh <-chan struct{}, watchCh chan<
 			healthyState, meta, err := health.State("passing", options)
 			if err != nil {
 				log.WithError(err).Error("Failed to retrieve health checks")
+				errorCh <- err
 				return
 			}
 
@@ -154,6 +163,7 @@ func (p *CatalogProvider) watchHealthState(stopCh <-chan struct{}, watchCh chan<
 			data, _, err := catalog.Services(&api.QueryOptions{})
 			if err != nil {
 				log.Errorf("Failed to list services: %s", err)
+				errorCh <- err
 				return
 			}
 
@@ -161,7 +171,7 @@ func (p *CatalogProvider) watchHealthState(stopCh <-chan struct{}, watchCh chan<
 				// A critical note is that the return of a blocking request is no guarantee of a change.
 				// It is possible that there was an idempotent write that does not affect the result of the query.
 				// Thus it is required to do extra check for changes...
-				addedKeys, removedKeys := getChangedHealthyKeys(current, flashback)
+				addedKeys, removedKeys := getChangedStringKeys(current, flashback)
 
 				if len(addedKeys) > 0 {
 					log.WithField("DiscoveredServices", addedKeys).Debug("Health State change detected.")
@@ -186,11 +196,10 @@ type Service struct {
 	Nodes []string
 }
 
-func (p *CatalogProvider) watchCatalogServices(stopCh <-chan struct{}, watchCh chan<- map[string][]string) {
+func (p *CatalogProvider) watchCatalogServices(stopCh <-chan struct{}, watchCh chan<- map[string][]string, errorCh chan<- error) {
 	catalog := p.client.Catalog()
 
 	safe.Go(func() {
-		current := make(map[string]Service)
 		// variable to hold previous state
 		var flashback map[string]Service
 
@@ -206,6 +215,7 @@ func (p *CatalogProvider) watchCatalogServices(stopCh <-chan struct{}, watchCh c
 			data, meta, err := catalog.Services(options)
 			if err != nil {
 				log.Errorf("Failed to list services: %s", err)
+				errorCh <- err
 				return
 			}
 
@@ -216,11 +226,12 @@ func (p *CatalogProvider) watchCatalogServices(stopCh <-chan struct{}, watchCh c
 			options.WaitIndex = meta.LastIndex
 
 			if data != nil {
-
+				current := make(map[string]Service)
 				for key, value := range data {
-					nodes, _, err := catalog.Service(key, "", options)
+					nodes, _, err := catalog.Service(key, "", &api.QueryOptions{})
 					if err != nil {
 						log.Errorf("Failed to get detail of service %s: %s", key, err)
+						errorCh <- err
 						return
 					}
 					nodesID := getServiceIds(nodes)
@@ -239,18 +250,7 @@ func (p *CatalogProvider) watchCatalogServices(stopCh <-chan struct{}, watchCh c
 				// A critical note is that the return of a blocking request is no guarantee of a change.
 				// It is possible that there was an idempotent write that does not affect the result of the query.
 				// Thus it is required to do extra check for changes...
-				addedServiceKeys, removedServiceKeys := getChangedServiceKeys(current, flashback)
-
-				addedServiceNodeKeys, removedServiceNodeKeys := getChangedServiceNodeKeys(current, flashback)
-
-				if len(addedServiceKeys) > 0 || len(addedServiceNodeKeys) > 0 {
-					log.WithField("DiscoveredServices", addedServiceKeys).Debug("Catalog Services change detected.")
-					watchCh <- data
-					flashback = current
-				}
-
-				if len(removedServiceKeys) > 0 || len(removedServiceNodeKeys) > 0 {
-					log.WithField("MissingServices", removedServiceKeys).Debug("Catalog Services change detected.")
+				if hasChanged(current, flashback) {
 					watchCh <- data
 					flashback = current
 				}
@@ -258,6 +258,7 @@ func (p *CatalogProvider) watchCatalogServices(stopCh <-chan struct{}, watchCh c
 		}
 	})
 }
+
 func getServiceIds(services []*api.CatalogService) []string {
 	var serviceIds []string
 	for _, service := range services {
@@ -274,7 +275,6 @@ func (p *CatalogProvider) healthyNodes(service string) (catalogUpdate, error) {
 		log.WithError(err).Errorf("Failed to fetch details of %s", service)
 		return catalogUpdate{}, err
 	}
-
 	nodes := fun.Filter(func(node *api.ServiceEntry) bool {
 		return p.nodeFilter(service, node)
 	}, data).([]*api.ServiceEntry)
@@ -392,16 +392,35 @@ func (p *CatalogProvider) getBackendName(node *api.ServiceEntry, index int) stri
 	return serviceName
 }
 
-func (p *CatalogProvider) getAttribute(name string, tags []string, defaultValue string) string {
-	return p.getTag(p.getPrefixedName(name), tags, defaultValue)
-}
-
 func (p *CatalogProvider) getBasicAuth(tags []string) []string {
 	list := p.getAttribute("frontend.auth.basic", tags, "")
 	if list != "" {
 		return strings.Split(list, ",")
 	}
 	return []string{}
+}
+
+func (p *CatalogProvider) getSticky(tags []string) string {
+	stickyTag := p.getTag(types.LabelBackendLoadbalancerSticky, tags, "")
+	if len(stickyTag) > 0 {
+		log.Warnf("Deprecated configuration found: %s. Please use %s.", types.LabelBackendLoadbalancerSticky, types.LabelBackendLoadbalancerStickiness)
+	} else {
+		stickyTag = "false"
+	}
+	return stickyTag
+}
+
+func (p *CatalogProvider) hasStickinessLabel(tags []string) bool {
+	stickinessTag := p.getTag(types.LabelBackendLoadbalancerStickiness, tags, "")
+	return len(stickinessTag) > 0 && strings.EqualFold(strings.TrimSpace(stickinessTag), "true")
+}
+
+func (p *CatalogProvider) getStickinessCookieName(tags []string) string {
+	return p.getTag(types.LabelBackendLoadbalancerStickinessCookieName, tags, "")
+}
+
+func (p *CatalogProvider) getAttribute(name string, tags []string, defaultValue string) string {
+	return p.getTag(p.getPrefixedName(name), tags, defaultValue)
 }
 
 func (p *CatalogProvider) hasTag(name string, tags []string) bool {
@@ -446,16 +465,19 @@ func (p *CatalogProvider) getConstraintTags(tags []string) []string {
 
 func (p *CatalogProvider) buildConfig(catalog []catalogUpdate) *types.Configuration {
 	var FuncMap = template.FuncMap{
-		"getBackend":           p.getBackend,
-		"getFrontendRule":      p.getFrontendRule,
-		"getBackendName":       p.getBackendName,
-		"getBackendAddress":    p.getBackendAddress,
-		"getAttribute":         p.getAttribute,
-		"getBasicAuth":         p.getBasicAuth,
-		"getTag":               p.getTag,
-		"hasTag":               p.hasTag,
-		"getEntryPoints":       p.getEntryPoints,
-		"hasMaxconnAttributes": p.hasMaxconnAttributes,
+		"getBackend":              p.getBackend,
+		"getFrontendRule":         p.getFrontendRule,
+		"getBackendName":          p.getBackendName,
+		"getBackendAddress":       p.getBackendAddress,
+		"getBasicAuth":            p.getBasicAuth,
+		"getSticky":               p.getSticky,
+		"hasStickinessLabel":      p.hasStickinessLabel,
+		"getStickinessCookieName": p.getStickinessCookieName,
+		"getAttribute":            p.getAttribute,
+		"getTag":                  p.getTag,
+		"hasTag":                  p.hasTag,
+		"getEntryPoints":          p.getEntryPoints,
+		"hasMaxconnAttributes":    p.hasMaxconnAttributes,
 	}
 
 	allNodes := []*api.ServiceEntry{}
@@ -519,9 +541,10 @@ func (p *CatalogProvider) getNodes(index map[string][]string) ([]catalogUpdate, 
 func (p *CatalogProvider) watch(configurationChan chan<- types.ConfigMessage, stop chan bool) error {
 	stopCh := make(chan struct{})
 	watchCh := make(chan map[string][]string)
+	errorCh := make(chan error)
 
-	p.watchHealthState(stopCh, watchCh)
-	p.watchCatalogServices(stopCh, watchCh)
+	p.watchHealthState(stopCh, watchCh, errorCh)
+	p.watchCatalogServices(stopCh, watchCh, errorCh)
 
 	defer close(stopCh)
 	defer close(watchCh)
@@ -544,6 +567,8 @@ func (p *CatalogProvider) watch(configurationChan chan<- types.ConfigMessage, st
 				ProviderName:  "consul_catalog",
 				Configuration: configuration,
 			}
+		case err := <-errorCh:
+			return err
 		}
 	}
 }

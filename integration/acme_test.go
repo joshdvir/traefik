@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/containous/traefik/integration/try"
@@ -91,6 +92,26 @@ func (s *AcmeSuite) TestOnHostRuleRetrieveAcmeCertificateWithWildcard(c *check.C
 	s.retrieveAcmeCertificate(c, testCase)
 }
 
+// Test OnDemand option with a wildcard provided certificate
+func (s *AcmeSuite) TestOnDemandRetrieveAcmeCertificateWithDynamicWildcard(c *check.C) {
+	testCase := AcmeTestCase{
+		traefikConfFilePath: "fixtures/acme/acme_provided_dynamic.toml",
+		onDemand:            true,
+		domainToCheck:       wildcardDomain}
+
+	s.retrieveAcmeCertificate(c, testCase)
+}
+
+// Test onHostRule option with a wildcard provided certificate
+func (s *AcmeSuite) TestOnHostRuleRetrieveAcmeCertificateWithDynamicWildcard(c *check.C) {
+	testCase := AcmeTestCase{
+		traefikConfFilePath: "fixtures/acme/acme_provided_dynamic.toml",
+		onDemand:            false,
+		domainToCheck:       wildcardDomain}
+
+	s.retrieveAcmeCertificate(c, testCase)
+}
+
 // Doing an HTTPS request and test the response certificate
 func (s *AcmeSuite) retrieveAcmeCertificate(c *check.C, testCase AcmeTestCase) {
 	file := s.adaptFile(c, testCase.traefikConfFilePath, struct {
@@ -101,8 +122,10 @@ func (s *AcmeSuite) retrieveAcmeCertificate(c *check.C, testCase AcmeTestCase) {
 		OnDemand:    testCase.onDemand,
 		OnHostRule:  !testCase.onDemand,
 	})
+	defer os.Remove(file)
 
-	cmd, output := s.cmdTraefik(withConfigFile(file))
+	cmd, display := s.traefikCmd(withConfigFile(file))
+	defer display(c)
 	err := cmd.Start()
 	c.Assert(err, checker.IsNil)
 	defer cmd.Process.Kill()
@@ -120,8 +143,6 @@ func (s *AcmeSuite) retrieveAcmeCertificate(c *check.C, testCase AcmeTestCase) {
 		_, err := client.Get("https://127.0.0.1:5001")
 		return err
 	})
-	// TODO: waiting a refactor of integration tests
-	s.displayTraefikLog(c, output)
 	c.Assert(err, checker.IsNil)
 
 	tr = &http.Transport{

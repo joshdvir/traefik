@@ -93,7 +93,9 @@ func TestMarathonLoadConfigNonAPIErrors(t *testing.T) {
 					},
 				},
 			},
-			expectedBackends: nil,
+			expectedBackends: map[string]*types.Backend{
+				"backend-app": {},
+			},
 		},
 		{
 			desc: "load balancer / circuit breaker labels",
@@ -517,10 +519,11 @@ func TestMarathonTaskFilter(t *testing.T) {
 
 func TestMarathonApplicationFilterConstraints(t *testing.T) {
 	cases := []struct {
-		desc                    string
-		application             marathon.Application
-		marathonLBCompatibility bool
-		expected                bool
+		desc                      string
+		application               marathon.Application
+		marathonLBCompatibility   bool
+		filterMarathonConstraints bool
+		expected                  bool
 	}{
 		{
 			desc:                    "tags missing",
@@ -533,6 +536,27 @@ func TestMarathonApplicationFilterConstraints(t *testing.T) {
 			application:             application(label(types.LabelTags, "valid")),
 			marathonLBCompatibility: false,
 			expected:                true,
+		},
+		{
+			desc:                      "constraint missing",
+			application:               application(),
+			marathonLBCompatibility:   false,
+			filterMarathonConstraints: true,
+			expected:                  false,
+		},
+		{
+			desc:                      "constraint invalid",
+			application:               application(constraint("service_cluster:CLUSTER:test")),
+			marathonLBCompatibility:   false,
+			filterMarathonConstraints: true,
+			expected:                  false,
+		},
+		{
+			desc:                      "constraint valid",
+			application:               application(constraint("valid")),
+			marathonLBCompatibility:   false,
+			filterMarathonConstraints: true,
+			expected:                  true,
 		},
 		{
 			desc: "LB compatibility tag matching",
@@ -550,8 +574,9 @@ func TestMarathonApplicationFilterConstraints(t *testing.T) {
 		t.Run(c.desc, func(t *testing.T) {
 			t.Parallel()
 			provider := &Provider{
-				ExposedByDefault:        true,
-				MarathonLBCompatibility: c.marathonLBCompatibility,
+				ExposedByDefault:          true,
+				MarathonLBCompatibility:   c.marathonLBCompatibility,
+				FilterMarathonConstraints: c.filterMarathonConstraints,
 			}
 			constraint, err := types.NewConstraint("tag==valid")
 			if err != nil {
@@ -854,9 +879,8 @@ func TestMarathonGetProtocol(t *testing.T) {
 		})
 	}
 }
-
 func TestMarathonGetSticky(t *testing.T) {
-	cases := []struct {
+	testCases := []struct {
 		desc        string
 		application marathon.Application
 		expected    string
@@ -873,14 +897,51 @@ func TestMarathonGetSticky(t *testing.T) {
 		},
 	}
 
-	for _, c := range cases {
-		c := c
-		t.Run(c.desc, func(t *testing.T) {
+	for _, test := range testCases {
+		test := test
+		t.Run(test.desc, func(t *testing.T) {
 			t.Parallel()
 			provider := &Provider{}
-			actual := provider.getSticky(c.application)
-			if actual != c.expected {
-				t.Errorf("actual %q, expected %q", actual, c.expected)
+			actual := provider.getSticky(test.application)
+			if actual != test.expected {
+				t.Errorf("actual %q, expected %q", actual, test.expected)
+			}
+		})
+	}
+}
+
+func TestMarathonHasStickinessLabel(t *testing.T) {
+	testCases := []struct {
+		desc        string
+		application marathon.Application
+		expected    bool
+	}{
+		{
+			desc:        "label missing",
+			application: application(),
+			expected:    false,
+		},
+		{
+			desc:        "stickiness=true",
+			application: application(label(types.LabelBackendLoadbalancerStickiness, "true")),
+			expected:    true,
+		},
+		{
+			desc:        "stickiness=false ",
+			application: application(label(types.LabelBackendLoadbalancerStickiness, "true")),
+			expected:    true,
+		},
+	}
+
+	for _, test := range testCases {
+		test := test
+		t.Run(test.desc, func(t *testing.T) {
+			t.Parallel()
+
+			provider := &Provider{}
+			actual := provider.hasStickinessLabel(test.application)
+			if actual != test.expected {
+				t.Errorf("actual %q, expected %q", actual, test.expected)
 			}
 		})
 	}
