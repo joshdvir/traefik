@@ -28,7 +28,7 @@ type Provider struct {
 // Provide allows the file provider to provide configurations to traefik
 // using the given configuration channel.
 func (p *Provider) Provide(configurationChan chan<- types.ConfigMessage, pool *safe.Pool, constraints types.Constraints) error {
-	configuration, err := p.LoadConfig()
+	configuration, err := p.BuildConfiguration()
 
 	if err != nil {
 		return err
@@ -52,9 +52,9 @@ func (p *Provider) Provide(configurationChan chan<- types.ConfigMessage, pool *s
 	return nil
 }
 
-// LoadConfig loads configuration either from file or a directory specified by 'Filename'/'Directory'
+// BuildConfiguration loads configuration either from file or a directory specified by 'Filename'/'Directory'
 // and returns a 'Configuration' object
-func (p *Provider) LoadConfig() (*types.Configuration, error) {
+func (p *Provider) BuildConfiguration() (*types.Configuration, error) {
 	if p.Directory != "" {
 		return loadFileConfigFromDirectory(p.Directory, nil)
 	}
@@ -108,7 +108,7 @@ func (p *Provider) watcherCallback(configurationChan chan<- types.ConfigMessage,
 		return
 	}
 
-	configuration, err := p.LoadConfig()
+	configuration, err := p.BuildConfiguration()
 
 	if err != nil {
 		log.Errorf("Error occurred during watcher callback: %s", err)
@@ -126,7 +126,10 @@ func sendConfigToChannel(configurationChan chan<- types.ConfigMessage, configura
 }
 
 func loadFileConfig(filename string) (*types.Configuration, error) {
-	configuration := new(types.Configuration)
+	configuration := &types.Configuration{
+		Frontends: make(map[string]*types.Frontend),
+		Backends:  make(map[string]*types.Backend),
+	}
 	if _, err := toml.DecodeFile(filename, configuration); err != nil {
 		return nil, fmt.Errorf("error reading configuration file: %s", err)
 	}
@@ -142,9 +145,8 @@ func loadFileConfigFromDirectory(directory string, configuration *types.Configur
 
 	if configuration == nil {
 		configuration = &types.Configuration{
-			Frontends:        make(map[string]*types.Frontend),
-			Backends:         make(map[string]*types.Backend),
-			TLSConfiguration: make([]*tls.Configuration, 0),
+			Frontends: make(map[string]*types.Frontend),
+			Backends:  make(map[string]*types.Backend),
 		}
 	}
 

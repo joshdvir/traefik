@@ -49,6 +49,10 @@ import (
 	"golang.org/x/net/http2"
 )
 
+const (
+	defaultRedirectRegex = `^(?:https?:\/\/)?([\w\._-]+)(?::\d+)?(.*)$`
+)
+
 var (
 	httpServerLogger = stdlog.New(log.WriterLevel(logrus.DebugLevel), "", 0)
 )
@@ -289,10 +293,14 @@ func (s *Server) setupServerEntryPoint(newServerEntryPointName string, newServer
 		serverMiddlewares = append(serverMiddlewares, middlewares.NewMetricsWrapper(s.metricsRegistry, newServerEntryPointName))
 	}
 	if s.globalConfiguration.API != nil {
-		s.globalConfiguration.API.Stats = thoas_stats.New()
+		if s.globalConfiguration.API.Stats == nil {
+			s.globalConfiguration.API.Stats = thoas_stats.New()
+		}
 		serverMiddlewares = append(serverMiddlewares, s.globalConfiguration.API.Stats)
 		if s.globalConfiguration.API.Statistics != nil {
-			s.globalConfiguration.API.StatsRecorder = middlewares.NewStatsRecorder(s.globalConfiguration.API.Statistics.RecentErrors)
+			if s.globalConfiguration.API.StatsRecorder == nil {
+				s.globalConfiguration.API.StatsRecorder = middlewares.NewStatsRecorder(s.globalConfiguration.API.Statistics.RecentErrors)
+			}
 			serverMiddlewares = append(serverMiddlewares, s.globalConfiguration.API.StatsRecorder)
 		}
 
@@ -370,6 +378,7 @@ func (s *Server) preLoadConfiguration(configMsg types.ConfigMessage) {
 // it will publish the last of the newly received configurations.
 func throttleProviderConfigReload(throttle time.Duration, publish chan<- types.ConfigMessage, in <-chan types.ConfigMessage, stop chan bool) {
 	ring := channels.NewRingChannel(1)
+	defer ring.Close()
 
 	safe.Go(func() {
 		for {
@@ -430,7 +439,11 @@ func (s *Server) loadConfiguration(configMsg types.ConfigMessage) {
 	if err == nil {
 		for newServerEntryPointName, newServerEntryPoint := range newServerEntryPoints {
 			s.serverEntryPoints[newServerEntryPointName].httpRouter.UpdateHandler(newServerEntryPoint.httpRouter.GetHandler())
-			if &newServerEntryPoint.certs != nil {
+			if s.globalConfiguration.EntryPoints[newServerEntryPointName].TLS == nil {
+				if newServerEntryPoint.certs.Get() != nil {
+					log.Debugf("Certificates not added to non-TLS entryPoint %s.", newServerEntryPointName)
+				}
+			} else {
 				s.serverEntryPoints[newServerEntryPointName].certs.Set(newServerEntryPoint.certs.Get())
 			}
 			log.Infof("Server configuration reloaded on %s", s.serverEntryPoints[newServerEntryPointName].httpServer.Addr)
@@ -443,12 +456,12 @@ func (s *Server) loadConfiguration(configMsg types.ConfigMessage) {
 }
 
 // loadHTTPSConfiguration add/delete HTTPS certificate managed dynamically
-func (s *Server) loadHTTPSConfiguration(configurations types.Configurations) (map[string]*traefikTls.DomainsCertificates, error) {
+func (s *Server) loadHTTPSConfiguration(configurations types.Configurations, defaultEntryPoints configuration.DefaultEntryPoints) (map[string]*traefikTls.DomainsCertificates, error) {
 	newEPCertificates := make(map[string]*traefikTls.DomainsCertificates)
 	// Get all certificates
 	for _, configuration := range configurations {
 		if configuration.TLSConfiguration != nil && len(configuration.TLSConfiguration) > 0 {
-			if err := traefikTls.SortTLSConfigurationPerEntryPoints(configuration.TLSConfiguration, newEPCertificates); err != nil {
+			if err := traefikTls.SortTLSConfigurationPerEntryPoints(configuration.TLSConfiguration, newEPCertificates, defaultEntryPoints); err != nil {
 				return nil, err
 			}
 		}
@@ -487,15 +500,15 @@ func (s *Server) postLoadConfiguration() {
 
 				// check if one of the frontend entrypoints is configured with TLS
 				// and is configured with ACME
-				ACMEEnabled := false
+				acmeEnabled := false
 				for _, entryPoint := range frontend.EntryPoints {
 					if s.globalConfiguration.ACME.EntryPoint == entryPoint && s.globalConfiguration.EntryPoints[entryPoint].TLS != nil {
-						ACMEEnabled = true
+						acmeEnabled = true
 						break
 					}
 				}
 
-				if ACMEEnabled {
+				if acmeEnabled {
 					for _, route := range frontend.Routes {
 						rules := Rules{}
 						domains, err := rules.ParseDomains(route.Rule)
@@ -849,7 +862,7 @@ func buildServerTimeouts(globalConfig configuration.GlobalConfiguration) (readTi
 	} else if globalConfig.RespondingTimeouts != nil {
 		idleTimeout = time.Duration(globalConfig.RespondingTimeouts.IdleTimeout)
 	} else {
-		idleTimeout = time.Duration(configuration.DefaultIdleTimeout)
+		idleTimeout = configuration.DefaultIdleTimeout
 	}
 
 	return readTimeout, writeTimeout, idleTimeout
@@ -884,7 +897,7 @@ func (s *Server) getRoundTripper(entryPointName string, globalConfiguration conf
 	return s.defaultForwardingRoundTripper, nil
 }
 
-// LoadConfig returns a new gorilla.mux Route from the specified global configuration and the dynamic
+// loadConfig returns a new gorilla.mux Route from the specified global configuration and the dynamic
 // provider configurations.
 func (s *Server) loadConfig(configurations types.Configurations, globalConfiguration configuration.GlobalConfiguration) (map[string]*serverEntryPoint, error) {
 	serverEntryPoints := s.buildEntryPoints(globalConfiguration)
@@ -906,13 +919,17 @@ func (s *Server) loadConfig(configurations types.Configurations, globalConfigura
 				log.Errorf("Skipping frontend %s...", frontendName)
 				continue frontend
 			}
-
+			var failedEntrypoints int
 			for _, entryPointName := range frontend.EntryPoints {
 				log.Debugf("Wiring frontend %s to entryPoint %s", frontendName, entryPointName)
 				if _, ok := serverEntryPoints[entryPointName]; !ok {
 					log.Errorf("Undefined entrypoint '%s' for frontend %s", entryPointName, frontendName)
-					log.Errorf("Skipping frontend %s...", frontendName)
-					continue frontend
+					failedEntrypoints++
+					if failedEntrypoints == len(frontend.EntryPoints) {
+						log.Errorf("Skipping frontend %s...", frontendName)
+						continue frontend
+					}
+					continue
 				}
 
 				newServerRoute := &serverRoute{route: serverEntryPoints[entryPointName].httpRouter.GetHandler().NewRoute().Name(frontendName)}
@@ -931,7 +948,7 @@ func (s *Server) loadConfig(configurations types.Configurations, globalConfigura
 				if entryPoint.Redirect != nil {
 					if redirectHandlers[entryPointName] != nil {
 						n.Use(redirectHandlers[entryPointName])
-					} else if handler, err := s.loadEntryPointConfig(entryPointName, entryPoint); err != nil {
+					} else if handler, err := s.buildRedirectHandler(entryPointName, entryPoint.Redirect); err != nil {
 						log.Errorf("Error loading entrypoint configuration for frontend %s: %v", frontendName, err)
 						log.Errorf("Skipping frontend %s...", frontendName)
 						continue frontend
@@ -963,10 +980,9 @@ func (s *Server) loadConfig(configurations types.Configurations, globalConfigura
 						continue frontend
 					}
 
-					var headerMiddleware *middlewares.HeaderStruct
+					headerMiddleware := middlewares.NewHeaderFromStruct(frontend.Headers)
 					var responseModifier func(res *http.Response) error
-					if frontend.Headers.HasCustomHeadersDefined() {
-						headerMiddleware = middlewares.NewHeaderFromStruct(frontend.Headers)
+					if headerMiddleware != nil {
 						responseModifier = headerMiddleware.ModifyResponseHeaders
 					}
 
@@ -1033,7 +1049,7 @@ func (s *Server) loadConfig(configurations types.Configurations, globalConfigura
 						if hcOpts != nil {
 							log.Debugf("Setting up backend health check %s", *hcOpts)
 							hcOpts.Transport = s.defaultForwardingRoundTripper
-							backendsHealthCheck[entryPointName+frontend.Backend] = healthcheck.NewBackendHealthCheck(*hcOpts)
+							backendsHealthCheck[entryPointName+frontend.Backend] = healthcheck.NewBackendHealthCheck(*hcOpts, frontend.Backend)
 						}
 						lb = middlewares.NewEmptyBackendHandler(rebalancer, lb)
 					case types.Wrr:
@@ -1055,7 +1071,7 @@ func (s *Server) loadConfig(configurations types.Configurations, globalConfigura
 						if hcOpts != nil {
 							log.Debugf("Setting up backend health check %s", *hcOpts)
 							hcOpts.Transport = s.defaultForwardingRoundTripper
-							backendsHealthCheck[entryPointName+frontend.Backend] = healthcheck.NewBackendHealthCheck(*hcOpts)
+							backendsHealthCheck[entryPointName+frontend.Backend] = healthcheck.NewBackendHealthCheck(*hcOpts, frontend.Backend)
 						}
 						lb = middlewares.NewEmptyBackendHandler(rr, lb)
 					}
@@ -1112,25 +1128,19 @@ func (s *Server) loadConfig(configurations types.Configurations, globalConfigura
 
 					ipWhitelistMiddleware, err := configureIPWhitelistMiddleware(frontend.WhitelistSourceRange)
 					if err != nil {
-						log.Fatalf("Error creating IP Whitelister: %s", err)
+						log.Errorf("Error creating IP Whitelister: %s", err)
 					} else if ipWhitelistMiddleware != nil {
 						n.Use(ipWhitelistMiddleware)
 						log.Infof("Configured IP Whitelists: %s", frontend.WhitelistSourceRange)
 					}
 
-					if len(frontend.Redirect) > 0 {
-						proto := "http"
-						if s.globalConfiguration.EntryPoints[frontend.Redirect].TLS != nil {
-							proto = "https"
-						}
-
-						regex, replacement, err := s.buildRedirect(proto, entryPoint)
-						rewrite, err := middlewares.NewRewrite(regex, replacement, true)
+					if frontend.Redirect != nil {
+						rewrite, err := s.buildRedirectHandler(entryPointName, frontend.Redirect)
 						if err != nil {
-							log.Fatalf("Error creating Frontend Redirect: %v", err)
+							log.Errorf("Error creating Frontend Redirect: %v", err)
 						}
 						n.Use(rewrite)
-						log.Debugf("Creating frontend %s redirect to %s", frontendName, proto)
+						log.Debugf("Frontend %s redirect created", frontendName)
 					}
 
 					if len(frontend.BasicAuth) > 0 {
@@ -1155,8 +1165,9 @@ func (s *Server) loadConfig(configurations types.Configurations, globalConfigura
 						log.Debugf("Adding header middleware for frontend %s", frontendName)
 						n.Use(headerMiddleware)
 					}
-					if frontend.Headers.HasSecureHeadersDefined() {
-						secureMiddleware := middlewares.NewSecure(frontend.Headers)
+
+					secureMiddleware := middlewares.NewSecure(frontend.Headers)
+					if secureMiddleware != nil {
 						log.Debugf("Adding secure middleware for frontend %s", frontendName)
 						n.UseFunc(secureMiddleware.HandlerFuncWithNext)
 					}
@@ -1192,7 +1203,7 @@ func (s *Server) loadConfig(configurations types.Configurations, globalConfigura
 	healthcheck.GetHealthCheck().SetBackendsConfiguration(s.routinesPool.Ctx(), backendsHealthCheck)
 	// Get new certificates list sorted per entrypoints
 	// Update certificates
-	entryPointsCertificates, err := s.loadHTTPSConfiguration(configurations)
+	entryPointsCertificates, err := s.loadHTTPSConfiguration(configurations, globalConfiguration.DefaultEntryPoints)
 	//sort routes and update certificates
 	for serverEntryPointName, serverEntryPoint := range serverEntryPoints {
 		serverEntryPoint.httpRouter.GetHandler().SortRoutes()
@@ -1280,38 +1291,57 @@ func (s *Server) wireFrontendBackend(serverRoute *serverRoute, handler http.Hand
 	serverRoute.route.Handler(handler)
 }
 
-func (s *Server) loadEntryPointConfig(entryPointName string, entryPoint *configuration.EntryPoint) (negroni.Handler, error) {
-	regex := entryPoint.Redirect.Regex
-	replacement := entryPoint.Redirect.Replacement
-	var err error
-	if len(entryPoint.Redirect.EntryPoint) > 0 {
-		var protocol = "http"
-		if s.globalConfiguration.EntryPoints[entryPoint.Redirect.EntryPoint].TLS != nil {
-			protocol = "https"
-		}
-		regex, replacement, err = s.buildRedirect(protocol, entryPoint)
+func (s *Server) buildRedirectHandler(srcEntryPointName string, redirect *types.Redirect) (*middlewares.Rewrite, error) {
+	// entry point redirect
+	if len(redirect.EntryPoint) > 0 {
+		return s.buildEntryPointRedirect(srcEntryPointName, redirect.EntryPoint)
 	}
-	rewrite, err := middlewares.NewRewrite(regex, replacement, true)
+
+	// regex redirect
+	rewrite, err := middlewares.NewRewrite(redirect.Regex, redirect.Replacement, true)
 	if err != nil {
 		return nil, err
 	}
-	log.Debugf("Creating entryPoint redirect %s -> %s : %s -> %s", entryPointName, entryPoint.Redirect.EntryPoint, regex, replacement)
+	log.Debugf("Creating entryPoint redirect %s -> %s -> %s", srcEntryPointName, redirect.Regex, redirect.Replacement)
 
 	return rewrite, nil
 }
 
-func (s *Server) buildRedirect(protocol string, entryPoint *configuration.EntryPoint) (string, string, error) {
-	regex := `^(?:https?:\/\/)?([\w\._-]+)(?::\d+)?(.*)$`
-	if s.globalConfiguration.EntryPoints[entryPoint.Redirect.EntryPoint] == nil {
-		return "", "", fmt.Errorf("unknown target entrypoint %q", entryPoint.Redirect.EntryPoint)
+func (s *Server) buildEntryPointRedirect(srcEntryPointName string, redirectEntryPoint string) (*middlewares.Rewrite, error) {
+	regex, replacement, err := s.buildRedirect(redirectEntryPoint)
+	if err != nil {
+		return nil, err
 	}
-	r, _ := regexp.Compile(`(:\d+)`)
-	match := r.FindStringSubmatch(s.globalConfiguration.EntryPoints[entryPoint.Redirect.EntryPoint].Address)
+
+	rewrite, err := middlewares.NewRewrite(regex, replacement, true)
+	if err != nil {
+		// Impossible case because error is always nil
+		return nil, err
+	}
+	log.Debugf("Creating entryPoint redirect %s -> %s : %s -> %s", srcEntryPointName, redirectEntryPoint, regex, replacement)
+
+	return rewrite, nil
+}
+
+func (s *Server) buildRedirect(entryPointName string) (string, string, error) {
+	entryPoint := s.globalConfiguration.EntryPoints[entryPointName]
+	if entryPoint == nil {
+		return "", "", fmt.Errorf("unknown target entrypoint %q", entryPointName)
+	}
+
+	exp := regexp.MustCompile(`(:\d+)`)
+	match := exp.FindStringSubmatch(entryPoint.Address)
 	if len(match) == 0 {
-		return "", "", fmt.Errorf("bad Address format %q", s.globalConfiguration.EntryPoints[entryPoint.Redirect.EntryPoint].Address)
+		return "", "", fmt.Errorf("bad Address format %q", entryPoint.Address)
 	}
+
+	var protocol = "http"
+	if s.globalConfiguration.EntryPoints[entryPointName].TLS != nil {
+		protocol = "https"
+	}
+
 	replacement := protocol + "://$1" + match[0] + "$2"
-	return regex, replacement, nil
+	return defaultRedirectRegex, replacement, nil
 }
 
 func (s *Server) buildDefaultHTTPRouter() *mux.Router {

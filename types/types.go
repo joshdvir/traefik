@@ -113,14 +113,14 @@ type Headers struct {
 }
 
 // HasCustomHeadersDefined checks to see if any of the custom header elements have been set
-func (h Headers) HasCustomHeadersDefined() bool {
-	return len(h.CustomResponseHeaders) != 0 ||
-		len(h.CustomRequestHeaders) != 0
+func (h *Headers) HasCustomHeadersDefined() bool {
+	return h != nil && (len(h.CustomResponseHeaders) != 0 ||
+		len(h.CustomRequestHeaders) != 0)
 }
 
 // HasSecureHeadersDefined checks to see if any of the secure header elements have been set
-func (h Headers) HasSecureHeadersDefined() bool {
-	return len(h.AllowedHosts) != 0 ||
+func (h *Headers) HasSecureHeadersDefined() bool {
+	return h != nil && (len(h.AllowedHosts) != 0 ||
 		len(h.HostsProxyHeaders) != 0 ||
 		h.SSLRedirect ||
 		h.SSLTemporaryRedirect ||
@@ -137,23 +137,30 @@ func (h Headers) HasSecureHeadersDefined() bool {
 		h.ContentSecurityPolicy != "" ||
 		h.PublicKey != "" ||
 		h.ReferrerPolicy != "" ||
-		h.IsDevelopment
+		h.IsDevelopment)
 }
 
 // Frontend holds frontend configuration.
 type Frontend struct {
-	EntryPoints          []string             `json:"entryPoints,omitempty"`
-	Backend              string               `json:"backend,omitempty"`
-	Routes               map[string]Route     `json:"routes,omitempty"`
-	PassHostHeader       bool                 `json:"passHostHeader,omitempty"`
-	PassTLSCert          bool                 `json:"passTLSCert,omitempty"`
-	Priority             int                  `json:"priority"`
-	BasicAuth            []string             `json:"basicAuth"`
-	WhitelistSourceRange []string             `json:"whitelistSourceRange,omitempty"`
-	Headers              Headers              `json:"headers,omitempty"`
-	Errors               map[string]ErrorPage `json:"errors,omitempty"`
-	RateLimit            *RateLimit           `json:"ratelimit,omitempty"`
-	Redirect             string               `json:"redirect,omitempty"`
+	EntryPoints          []string              `json:"entryPoints,omitempty"`
+	Backend              string                `json:"backend,omitempty"`
+	Routes               map[string]Route      `json:"routes,omitempty"`
+	PassHostHeader       bool                  `json:"passHostHeader,omitempty"`
+	PassTLSCert          bool                  `json:"passTLSCert,omitempty"`
+	Priority             int                   `json:"priority"`
+	BasicAuth            []string              `json:"basicAuth"`
+	WhitelistSourceRange []string              `json:"whitelistSourceRange,omitempty"`
+	Headers              *Headers              `json:"headers,omitempty"`
+	Errors               map[string]*ErrorPage `json:"errors,omitempty"`
+	RateLimit            *RateLimit            `json:"ratelimit,omitempty"`
+	Redirect             *Redirect             `json:"redirect,omitempty"`
+}
+
+// Redirect configures a redirection of an entry point to another, or to an URL
+type Redirect struct {
+	EntryPoint  string `json:"entryPoint,omitempty"`
+	Regex       string `json:"regex,omitempty"`
+	Replacement string `json:"replacement,omitempty"`
 }
 
 // LoadBalancerMethod holds the method of load balancing to use.
@@ -305,7 +312,7 @@ func (cs *Constraints) String() string { return fmt.Sprintf("%+v", *cs) }
 
 //SetValue sets []*Constraint into the parser
 func (cs *Constraints) SetValue(val interface{}) {
-	*cs = Constraints(val.(Constraints))
+	*cs = val.(Constraints)
 }
 
 // Type exports the Constraints type as a string
@@ -420,14 +427,14 @@ func (b *Buckets) Set(str string) error {
 }
 
 //Get []float64
-func (b *Buckets) Get() interface{} { return Buckets(*b) }
+func (b *Buckets) Get() interface{} { return *b }
 
 //String return slice in a string
 func (b *Buckets) String() string { return fmt.Sprintf("%v", *b) }
 
 //SetValue sets []float64 into the parser
 func (b *Buckets) SetValue(val interface{}) {
-	*b = Buckets(val.(Buckets))
+	*b = val.(Buckets)
 }
 
 // TraefikLog holds the configuration settings for the traefik logger.
