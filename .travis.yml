@@ -1,5 +1,6 @@
 sudo: required
 dist: trusty
+group: deprecated-2017Q4
 
 git:
   depth: false
@@ -31,7 +32,7 @@ before_deploy:
       fi;
       curl -sI https://github.com/containous/structor/releases/latest | grep -Fi Location  | tr -d '\r' | sed "s/tag/download/g" | awk -F " " '{ print $2 "/structor_linux-amd64"}' | wget --output-document=$GOPATH/bin/structor -i -;
       chmod +x $GOPATH/bin/structor;
-      structor -o joshdvir -r traefik --dockerfile-url="https://raw.githubusercontent.com/containous/traefik/master/docs.Dockerfile" --menu.js-url="https://raw.githubusercontent.com/containous/structor/master/traefik-menu.js.gotmpl" --exp-branch=deploy --debug;
+      structor -o containous -r traefik --dockerfile-url="https://raw.githubusercontent.com/containous/traefik/master/docs.Dockerfile" --menu.js-url="https://raw.githubusercontent.com/containous/structor/master/traefik-menu.js.gotmpl" --exp-branch=deploy --debug;
     fi
 deploy:
   - provider: releases
