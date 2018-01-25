@@ -17,7 +17,9 @@ import (
 	"github.com/containous/traefik/job"
 	"github.com/containous/traefik/log"
 	"github.com/containous/traefik/provider"
+	"github.com/containous/traefik/provider/label"
 	"github.com/containous/traefik/safe"
+	"github.com/containous/traefik/tls"
 	"github.com/containous/traefik/types"
 	"k8s.io/client-go/pkg/api/v1"
 	"k8s.io/client-go/pkg/apis/extensions/v1beta1"
@@ -73,18 +75,18 @@ type Provider struct {
 	lastConfiguration      safe.Safe
 }
 
-func (p Provider) newK8sClient() (Client, error) {
+func (p *Provider) newK8sClient() (Client, error) {
 	withEndpoint := ""
 	if p.Endpoint != "" {
 		withEndpoint = fmt.Sprintf(" with endpoint %v", p.Endpoint)
 	}
 
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" && os.Getenv("KUBERNETES_SERVICE_PORT") != "" {
-		log.Infof("Creating in-cluster Provider client%s\n", withEndpoint)
+		log.Infof("Creating in-cluster Provider client%s", withEndpoint)
 		return NewInClusterClient(p.Endpoint)
 	}
 
-	log.Infof("Creating cluster-external Provider client%s\n", withEndpoint)
+	log.Infof("Creating cluster-external Provider client%s", withEndpoint)
 	return NewExternalClusterClient(p.Endpoint, p.Token, p.CertAuthFilePath)
 }
 
@@ -95,7 +97,10 @@ func (p *Provider) Provide(configurationChan chan<- types.ConfigMessage, pool *s
 	// certain kinds of API errors getting logged into a directory not
 	// available in a `FROM scratch` Docker container, causing glog to abort
 	// hard with an exit code > 0.
-	flag.Set("logtostderr", "true")
+	err := flag.Set("logtostderr", "true")
+	if err != nil {
+		return err
+	}
 
 	k8sClient, err := p.newK8sClient()
 	if err != nil {
@@ -170,6 +175,13 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 			continue
 		}
 
+		tlsSection, err := getTLS(i, k8sClient)
+		if err != nil {
+			log.Errorf("Error configuring TLS for ingress %s/%s: %v", i.Namespace, i.Name, err)
+			continue
+		}
+		templateObjects.TLS = append(templateObjects.TLS, tlsSection...)
+
 		for _, r := range i.Spec.Rules {
 			if r.HTTP == nil {
 				log.Warn("Error in ingress: HTTP is nil")
@@ -186,8 +198,8 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 					}
 				}
 
-				passHostHeader := getBoolAnnotation(i, types.LabelFrontendPassHostHeader, !p.DisablePassHostHeaders)
-				passTLSCert := getBoolAnnotation(i, types.LabelFrontendPassTLSCert, p.EnablePassTLSCert)
+				passHostHeader := label.GetBoolValue(i.Annotations, label.TraefikFrontendPassHostHeader, !p.DisablePassHostHeaders)
+				passTLSCert := label.GetBoolValue(i.Annotations, label.TraefikFrontendPassTLSCert, p.EnablePassTLSCert)
 
 				if realm := i.Annotations[annotationKubernetesAuthRealm]; realm != "" && realm != traefikDefaultRealm {
 					log.Errorf("Value for annotation %q on ingress %s/%s invalid: no realm customization supported", annotationKubernetesAuthRealm, i.ObjectMeta.Namespace, i.ObjectMeta.Name)
@@ -195,11 +207,9 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 					continue
 				}
 
-				entryPoints := getSliceAnnotation(i, types.LabelFrontendEntryPoints)
+				entryPoints := label.GetSliceStringValue(i.Annotations, label.TraefikFrontendEntryPoints)
 
-				whitelistSourceRange := getSliceAnnotation(i, annotationKubernetesWhitelistSourceRange)
-
-				entryPointRedirect, _ := i.Annotations[types.LabelFrontendRedirect]
+				whitelistSourceRange := label.GetSliceStringValue(i.Annotations, annotationKubernetesWhitelistSourceRange)
 
 				if _, exists := templateObjects.Frontends[r.Host+pa.Path]; !exists {
 					basicAuthCreds, err := handleBasicAuthConfig(i, k8sClient)
@@ -208,29 +218,29 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 						continue
 					}
 
-					priority := getPriority(i)
+					priority := label.GetIntValue(i.Annotations, label.TraefikFrontendPriority, 0)
 
-					headers := types.Headers{
-						CustomRequestHeaders:    getMapAnnotation(i, annotationKubernetesCustomRequestHeaders),
-						CustomResponseHeaders:   getMapAnnotation(i, annotationKubernetesCustomResponseHeaders),
-						AllowedHosts:            getSliceAnnotation(i, annotationKubernetesAllowedHosts),
-						HostsProxyHeaders:       getSliceAnnotation(i, annotationKubernetesProxyHeaders),
-						SSLRedirect:             getBoolAnnotation(i, annotationKubernetesSSLRedirect, false),
-						SSLTemporaryRedirect:    getBoolAnnotation(i, annotationKubernetesSSLTemporaryRedirect, false),
-						SSLHost:                 getStringAnnotation(i, annotationKubernetesSSLHost),
-						SSLProxyHeaders:         getMapAnnotation(i, annotationKubernetesSSLProxyHeaders),
-						STSSeconds:              getSTSSeconds(i),
-						STSIncludeSubdomains:    getBoolAnnotation(i, annotationKubernetesHSTSIncludeSubdomains, false),
-						STSPreload:              getBoolAnnotation(i, annotationKubernetesHSTSPreload, false),
-						ForceSTSHeader:          getBoolAnnotation(i, annotationKubernetesForceHSTSHeader, false),
-						FrameDeny:               getBoolAnnotation(i, annotationKubernetesFrameDeny, false),
-						CustomFrameOptionsValue: getStringAnnotation(i, annotationKubernetesCustomFrameOptionsValue),
-						ContentTypeNosniff:      getBoolAnnotation(i, annotationKubernetesContentTypeNosniff, false),
-						BrowserXSSFilter:        getBoolAnnotation(i, annotationKubernetesBrowserXSSFilter, false),
-						ContentSecurityPolicy:   getStringAnnotation(i, annotationKubernetesContentSecurityPolicy),
-						PublicKey:               getStringAnnotation(i, annotationKubernetesPublicKey),
-						ReferrerPolicy:          getStringAnnotation(i, annotationKubernetesReferrerPolicy),
-						IsDevelopment:           getBoolAnnotation(i, annotationKubernetesIsDevelopment, false),
+					headers := &types.Headers{
+						CustomRequestHeaders:    label.GetMapValue(i.Annotations, annotationKubernetesCustomRequestHeaders),
+						CustomResponseHeaders:   label.GetMapValue(i.Annotations, annotationKubernetesCustomResponseHeaders),
+						AllowedHosts:            label.GetSliceStringValue(i.Annotations, annotationKubernetesAllowedHosts),
+						HostsProxyHeaders:       label.GetSliceStringValue(i.Annotations, annotationKubernetesProxyHeaders),
+						SSLRedirect:             label.GetBoolValue(i.Annotations, annotationKubernetesSSLRedirect, false),
+						SSLTemporaryRedirect:    label.GetBoolValue(i.Annotations, annotationKubernetesSSLTemporaryRedirect, false),
+						SSLHost:                 label.GetStringValue(i.Annotations, annotationKubernetesSSLHost, ""),
+						SSLProxyHeaders:         label.GetMapValue(i.Annotations, annotationKubernetesSSLProxyHeaders),
+						STSSeconds:              label.GetInt64Value(i.Annotations, annotationKubernetesHSTSMaxAge, 0),
+						STSIncludeSubdomains:    label.GetBoolValue(i.Annotations, annotationKubernetesHSTSIncludeSubdomains, false),
+						STSPreload:              label.GetBoolValue(i.Annotations, annotationKubernetesHSTSPreload, false),
+						ForceSTSHeader:          label.GetBoolValue(i.Annotations, annotationKubernetesForceHSTSHeader, false),
+						FrameDeny:               label.GetBoolValue(i.Annotations, annotationKubernetesFrameDeny, false),
+						CustomFrameOptionsValue: label.GetStringValue(i.Annotations, annotationKubernetesCustomFrameOptionsValue, ""),
+						ContentTypeNosniff:      label.GetBoolValue(i.Annotations, annotationKubernetesContentTypeNosniff, false),
+						BrowserXSSFilter:        label.GetBoolValue(i.Annotations, annotationKubernetesBrowserXSSFilter, false),
+						ContentSecurityPolicy:   label.GetStringValue(i.Annotations, annotationKubernetesContentSecurityPolicy, ""),
+						PublicKey:               label.GetStringValue(i.Annotations, annotationKubernetesPublicKey, ""),
+						ReferrerPolicy:          label.GetStringValue(i.Annotations, annotationKubernetesReferrerPolicy, ""),
+						IsDevelopment:           label.GetBoolValue(i.Annotations, annotationKubernetesIsDevelopment, false),
 					}
 
 					templateObjects.Frontends[r.Host+pa.Path] = &types.Frontend{
@@ -241,7 +251,7 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 						Priority:             priority,
 						BasicAuth:            basicAuthCreds,
 						WhitelistSourceRange: whitelistSourceRange,
-						Redirect:             entryPointRedirect,
+						Redirect:             getFrontendRedirect(i),
 						EntryPoints:          entryPoints,
 						Headers:              headers,
 					}
@@ -279,29 +289,29 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 					continue
 				}
 
-				if expression := service.Annotations[types.LabelTraefikBackendCircuitbreaker]; expression != "" {
+				if expression := service.Annotations[label.TraefikBackendCircuitBreaker]; expression != "" {
 					templateObjects.Backends[r.Host+pa.Path].CircuitBreaker = &types.CircuitBreaker{
 						Expression: expression,
 					}
 				}
 
-				if service.Annotations[types.LabelBackendLoadbalancerMethod] == "drr" {
+				if service.Annotations[label.TraefikBackendLoadBalancerMethod] == "drr" {
 					templateObjects.Backends[r.Host+pa.Path].LoadBalancer.Method = "drr"
 				}
 
-				if sticky := service.Annotations[types.LabelBackendLoadbalancerSticky]; len(sticky) > 0 {
-					log.Warnf("Deprecated configuration found: %s. Please use %s.", types.LabelBackendLoadbalancerSticky, types.LabelBackendLoadbalancerStickiness)
+				if sticky := service.Annotations[label.TraefikBackendLoadBalancerSticky]; len(sticky) > 0 {
+					log.Warnf("Deprecated configuration found: %s. Please use %s.", label.TraefikBackendLoadBalancerSticky, label.TraefikBackendLoadBalancerStickiness)
 					templateObjects.Backends[r.Host+pa.Path].LoadBalancer.Sticky = strings.EqualFold(strings.TrimSpace(sticky), "true")
 				}
 
-				if service.Annotations[types.LabelBackendLoadbalancerStickiness] == "true" {
+				if service.Annotations[label.TraefikBackendLoadBalancerStickiness] == "true" {
 					templateObjects.Backends[r.Host+pa.Path].LoadBalancer.Stickiness = &types.Stickiness{}
-					if cookieName := service.Annotations[types.LabelBackendLoadbalancerStickinessCookieName]; len(cookieName) > 0 {
+					if cookieName := service.Annotations[label.TraefikBackendLoadBalancerStickinessCookieName]; len(cookieName) > 0 {
 						templateObjects.Backends[r.Host+pa.Path].LoadBalancer.Stickiness.CookieName = cookieName
 					}
 				}
 
-				protocol := "http"
+				protocol := label.DefaultProtocol
 				for _, port := range service.Spec.Ports {
 					if equalPorts(port, pa.Backend.ServicePort) {
 						if port.Port == 443 {
@@ -356,7 +366,7 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 	return &templateObjects, nil
 }
 
-func (p Provider) loadConfig(templateObjects types.Configuration) *types.Configuration {
+func (p *Provider) loadConfig(templateObjects types.Configuration) *types.Configuration {
 	var FuncMap = template.FuncMap{}
 	configuration, err := p.GetConfiguration("templates/kubernetes.tmpl", FuncMap, templateObjects)
 	if err != nil {
@@ -365,20 +375,12 @@ func (p Provider) loadConfig(templateObjects types.Configuration) *types.Configu
 	return configuration
 }
 
-func getSTSSeconds(i *v1beta1.Ingress) int64 {
-	value, err := strconv.ParseInt(i.ObjectMeta.Annotations[annotationKubernetesHSTSMaxAge], 10, 64)
-	if err == nil && value > 0 {
-		return value
-	}
-	return 0
-}
-
 func getRuleForPath(pa v1beta1.HTTPIngressPath, i *v1beta1.Ingress) string {
 	if len(pa.Path) == 0 {
 		return ""
 	}
 
-	ruleType := i.Annotations[types.LabelFrontendRuleType]
+	ruleType := i.Annotations[label.TraefikFrontendRuleType]
 	if ruleType == "" {
 		ruleType = ruleTypePathPrefix
 	}
@@ -392,39 +394,26 @@ func getRuleForPath(pa v1beta1.HTTPIngressPath, i *v1beta1.Ingress) string {
 	return strings.Join(rules, ";")
 }
 
-func getPriority(i *v1beta1.Ingress) int {
-	priority := 0
-
-	priorityRaw, ok := i.Annotations[types.LabelFrontendPriority]
-	if ok {
-		priorityParsed, err := strconv.Atoi(priorityRaw)
-
-		if err == nil {
-			priority = priorityParsed
-		} else {
-			log.Errorf("Error in ingress: failed to parse %q value %q.", types.LabelFrontendPriority, priorityRaw)
-		}
-	}
-
-	return priority
-}
-
 func handleBasicAuthConfig(i *v1beta1.Ingress, k8sClient Client) ([]string, error) {
 	authType, exists := i.Annotations[annotationKubernetesAuthType]
 	if !exists {
 		return nil, nil
 	}
+
 	if strings.ToLower(authType) != "basic" {
 		return nil, fmt.Errorf("unsupported auth-type on annotation ingress.kubernetes.io/auth-type: %q", authType)
 	}
+
 	authSecret := i.Annotations[annotationKubernetesAuthSecret]
 	if authSecret == "" {
 		return nil, errors.New("auth-secret annotation ingress.kubernetes.io/auth-secret must be set")
 	}
+
 	basicAuthCreds, err := loadAuthCredentials(i.Namespace, authSecret, k8sClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load auth credentials: %s", err)
 	}
+
 	return basicAuthCreds, nil
 }
 
@@ -460,6 +449,48 @@ func loadAuthCredentials(namespace, secretName string, k8sClient Client) ([]stri
 	return creds, nil
 }
 
+func getTLS(ingress *v1beta1.Ingress, k8sClient Client) ([]*tls.Configuration, error) {
+	var tlsConfigs []*tls.Configuration
+
+	for _, t := range ingress.Spec.TLS {
+		tlsSecret, exists, err := k8sClient.GetSecret(ingress.Namespace, t.SecretName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch secret %s/%s: %v", ingress.Namespace, t.SecretName, err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("secret %s/%s does not exist", ingress.Namespace, t.SecretName)
+		}
+
+		tlsCrtData, tlsCrtExists := tlsSecret.Data["tls.crt"]
+		tlsKeyData, tlsKeyExists := tlsSecret.Data["tls.key"]
+
+		var missingEntries []string
+		if !tlsCrtExists {
+			missingEntries = append(missingEntries, "tls.crt")
+		}
+		if !tlsKeyExists {
+			missingEntries = append(missingEntries, "tls.key")
+		}
+		if len(missingEntries) > 0 {
+			return nil, fmt.Errorf("secret %s/%s is missing the following TLS data entries: %s", ingress.Namespace, t.SecretName, strings.Join(missingEntries, ", "))
+		}
+
+		entryPoints := label.GetSliceStringValue(ingress.Annotations, label.TraefikFrontendEntryPoints)
+
+		tlsConfig := &tls.Configuration{
+			EntryPoints: entryPoints,
+			Certificate: &tls.Certificate{
+				CertFile: tls.FileOrContent(tlsCrtData),
+				KeyFile:  tls.FileOrContent(tlsKeyData),
+			},
+		}
+
+		tlsConfigs = append(tlsConfigs, tlsConfig)
+	}
+
+	return tlsConfigs, nil
+}
+
 func endpointPortNumber(servicePort v1.ServicePort, endpointPorts []v1.EndpointPort) int {
 	if len(endpointPorts) > 0 {
 		//name is optional if there is only one port
@@ -485,10 +516,25 @@ func equalPorts(servicePort v1.ServicePort, ingressPort intstr.IntOrString) bool
 }
 
 func shouldProcessIngress(ingressClass string) bool {
-	switch ingressClass {
-	case "", "traefik":
-		return true
-	default:
-		return false
+	return ingressClass == "" || ingressClass == "traefik"
+}
+
+func getFrontendRedirect(i *v1beta1.Ingress) *types.Redirect {
+	frontendRedirectEntryPoint, ok := i.Annotations[label.TraefikFrontendRedirectEntryPoint]
+	frep := ok && len(frontendRedirectEntryPoint) > 0
+
+	frontendRedirectRegex, ok := i.Annotations[label.TraefikFrontendRedirectRegex]
+	frrg := ok && len(frontendRedirectRegex) > 0
+
+	frontendRedirectReplacement, ok := i.Annotations[label.TraefikFrontendRedirectReplacement]
+	frrp := ok && len(frontendRedirectReplacement) > 0
+
+	if frep || frrg && frrp {
+		return &types.Redirect{
+			EntryPoint:  frontendRedirectEntryPoint,
+			Regex:       frontendRedirectRegex,
+			Replacement: frontendRedirectReplacement,
+		}
 	}
+	return nil
 }

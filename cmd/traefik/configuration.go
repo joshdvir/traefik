@@ -8,9 +8,13 @@ import (
 	"github.com/containous/traefik/api"
 	"github.com/containous/traefik/configuration"
 	"github.com/containous/traefik/middlewares/accesslog"
+	"github.com/containous/traefik/middlewares/tracing"
+	"github.com/containous/traefik/middlewares/tracing/jaeger"
+	"github.com/containous/traefik/middlewares/tracing/zipkin"
 	"github.com/containous/traefik/ping"
 	"github.com/containous/traefik/provider/boltdb"
 	"github.com/containous/traefik/provider/consul"
+	"github.com/containous/traefik/provider/consulcatalog"
 	"github.com/containous/traefik/provider/docker"
 	"github.com/containous/traefik/provider/dynamodb"
 	"github.com/containous/traefik/provider/ecs"
@@ -61,7 +65,8 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 	// TODO: Deprecated - default Metrics
 	defaultWeb.Metrics = &types.Metrics{
 		Prometheus: &types.Prometheus{
-			Buckets: types.Buckets{0.1, 0.3, 1.2, 5},
+			Buckets:    types.Buckets{0.1, 0.3, 1.2, 5},
+			EntryPoint: configuration.DefaultInternalEntryPointName,
 		},
 		Datadog: &types.Datadog{
 			Address:      "localhost:8125",
@@ -94,7 +99,7 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 	defaultConsul.Constraints = types.Constraints{}
 
 	// default CatalogProvider
-	var defaultConsulCatalog consul.CatalogProvider
+	var defaultConsulCatalog consulcatalog.Provider
 	defaultConsulCatalog.Endpoint = "127.0.0.1:8500"
 	defaultConsulCatalog.ExposedByDefault = true
 	defaultConsulCatalog.Constraints = types.Constraints{}
@@ -112,7 +117,7 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 	var defaultZookeeper zk.Provider
 	defaultZookeeper.Watch = true
 	defaultZookeeper.Endpoint = "127.0.0.1:2181"
-	defaultZookeeper.Prefix = "/traefik"
+	defaultZookeeper.Prefix = "traefik"
 	defaultZookeeper.Constraints = types.Constraints{}
 
 	//default Boltdb
@@ -202,6 +207,24 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 		DialTimeout: flaeg.Duration(configuration.DefaultDialTimeout),
 	}
 
+	// default Tracing
+	defaultTracing := tracing.Tracing{
+		Backend:     "jaeger",
+		ServiceName: "traefik",
+		Jaeger: &jaeger.Config{
+			SamplingServerURL:  "http://localhost:5778/sampling",
+			SamplingType:       "const",
+			SamplingParam:      1.0,
+			LocalAgentHostPort: "127.0.0.1:6832",
+		},
+		Zipkin: &zipkin.Config{
+			HTTPEndpoint: "http://localhost:9411/api/v1/spans",
+			SameSpan:     false,
+			ID128Bit:     true,
+			Debug:        false,
+		},
+	}
+
 	// default LifeCycle
 	defaultLifeCycle := configuration.LifeCycle{
 		GraceTimeOut: flaeg.Duration(configuration.DefaultGraceTimeout),
@@ -220,7 +243,7 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 	defaultMetrics := types.Metrics{
 		Prometheus: &types.Prometheus{
 			Buckets:    types.Buckets{0.1, 0.3, 1.2, 5},
-			EntryPoint: "traefik",
+			EntryPoint: configuration.DefaultInternalEntryPointName,
 		},
 		Datadog: &types.Datadog{
 			Address:      "localhost:8125",
@@ -263,6 +286,7 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 		Ping:               &defaultPing,
 		API:                &defaultAPI,
 		Metrics:            &defaultMetrics,
+		Tracing:            &defaultTracing,
 	}
 
 	return &TraefikConfiguration{
@@ -279,7 +303,7 @@ func NewTraefikConfiguration() *TraefikConfiguration {
 			LogLevel:                  "ERROR",
 			EntryPoints:               map[string]*configuration.EntryPoint{},
 			Constraints:               types.Constraints{},
-			DefaultEntryPoints:        []string{},
+			DefaultEntryPoints:        []string{"http"},
 			ProvidersThrottleDuration: flaeg.Duration(2 * time.Second),
 			MaxIdleConnsPerHost:       200,
 			IdleTimeout:               flaeg.Duration(0),

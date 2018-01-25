@@ -78,7 +78,7 @@ func (p *Provider) apiProvide(configurationChan chan<- types.ConfigMessage, pool
 
 			var rancherData = parseAPISourcedRancherData(stacks, services, container)
 
-			configuration := p.loadRancherConfig(rancherData)
+			configuration := p.buildConfiguration(rancherData)
 			configurationChan <- types.ConfigMessage{
 				ProviderName:  "rancher",
 				Configuration: configuration,
@@ -91,19 +91,24 @@ func (p *Provider) apiProvide(configurationChan chan<- types.ConfigMessage, pool
 					for {
 						select {
 						case <-ticker.C:
+							checkAPI, errAPI := rancherClient.ApiKey.List(withoutPagination)
 
-							log.Debugf("Refreshing new Data from Provider API")
-							var stacks = listRancherStacks(rancherClient)
-							var services = listRancherServices(rancherClient)
-							var container = listRancherContainer(rancherClient)
+							if errAPI != nil {
+								log.Errorf("Cannot establish connection: %+v, Rancher API return: %+v; Skipping refresh Data from Rancher API.", errAPI, checkAPI)
+							} else {
+								log.Debugf("Refreshing new Data from Rancher API")
+								stacks := listRancherStacks(rancherClient)
+								services := listRancherServices(rancherClient)
+								container := listRancherContainer(rancherClient)
 
-							rancherData := parseAPISourcedRancherData(stacks, services, container)
+								rancherData := parseAPISourcedRancherData(stacks, services, container)
 
-							configuration := p.loadRancherConfig(rancherData)
-							if configuration != nil {
-								configurationChan <- types.ConfigMessage{
-									ProviderName:  "rancher",
-									Configuration: configuration,
+								configuration := p.buildConfiguration(rancherData)
+								if configuration != nil {
+									configurationChan <- types.ConfigMessage{
+										ProviderName:  "rancher",
+										Configuration: configuration,
+									}
 								}
 							}
 						case <-stop:
@@ -131,7 +136,7 @@ func (p *Provider) apiProvide(configurationChan chan<- types.ConfigMessage, pool
 
 func listRancherStacks(client *rancher.RancherClient) []*rancher.Stack {
 
-	var stackList = []*rancher.Stack{}
+	var stackList []*rancher.Stack
 
 	stacks, err := client.Stack.List(withoutPagination)
 
@@ -148,7 +153,7 @@ func listRancherStacks(client *rancher.RancherClient) []*rancher.Stack {
 
 func listRancherServices(client *rancher.RancherClient) []*rancher.Service {
 
-	var servicesList = []*rancher.Service{}
+	var servicesList []*rancher.Service
 
 	services, err := client.Service.List(withoutPagination)
 
@@ -165,7 +170,7 @@ func listRancherServices(client *rancher.RancherClient) []*rancher.Service {
 
 func listRancherContainer(client *rancher.RancherClient) []*rancher.Container {
 
-	containerList := []*rancher.Container{}
+	var containerList []*rancher.Container
 
 	container, err := client.Container.List(withoutPagination)
 
@@ -205,7 +210,7 @@ func parseAPISourcedRancherData(stacks []*rancher.Stack, services []*rancher.Ser
 				continue
 			}
 
-			rancherData := rancherData{
+			rData := rancherData{
 				Name:       service.Name + "/" + stack.Name,
 				Health:     service.HealthState,
 				State:      service.State,
@@ -217,7 +222,7 @@ func parseAPISourcedRancherData(stacks []*rancher.Stack, services []*rancher.Ser
 				log.Warnf("Rancher Service Labels are missing. Stack: %s, service: %s", stack.Name, service.Name)
 			} else {
 				for key, value := range service.LaunchConfig.Labels {
-					rancherData.Labels[key] = value.(string)
+					rData.Labels[key] = value.(string)
 				}
 			}
 
@@ -235,14 +240,14 @@ func parseAPISourcedRancherData(stacks []*rancher.Stack, services []*rancher.Ser
 						}
 
 						if len(endpoints) > 0 {
-							rancherData.Containers = append(rancherData.Containers, endpoints[0].IpAddress)
+							rData.Containers = append(rData.Containers, endpoints[0].IpAddress)
 						}
 					} else {
-						rancherData.Containers = append(rancherData.Containers, container.PrimaryIpAddress)
+						rData.Containers = append(rData.Containers, container.PrimaryIpAddress)
 					}
 				}
 			}
-			rancherDataList = append(rancherDataList, rancherData)
+			rancherDataList = append(rancherDataList, rData)
 		}
 	}
 

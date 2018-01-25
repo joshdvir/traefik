@@ -10,9 +10,11 @@ import (
 	"github.com/containous/traefik/acme"
 	"github.com/containous/traefik/api"
 	"github.com/containous/traefik/log"
+	"github.com/containous/traefik/middlewares/tracing"
 	"github.com/containous/traefik/ping"
 	"github.com/containous/traefik/provider/boltdb"
 	"github.com/containous/traefik/provider/consul"
+	"github.com/containous/traefik/provider/consulcatalog"
 	"github.com/containous/traefik/provider/docker"
 	"github.com/containous/traefik/provider/dynamodb"
 	"github.com/containous/traefik/provider/ecs"
@@ -59,6 +61,7 @@ type GlobalConfiguration struct {
 	AccessLog                 *types.AccessLog        `description:"Access log settings" export:"true"`
 	TraefikLogsFile           string                  `description:"(Deprecated) Traefik logs file. Stdout is used when omitted or empty" export:"true"` // Deprecated
 	TraefikLog                *types.TraefikLog       `description:"Traefik log settings" export:"true"`
+	Tracing                   *tracing.Tracing        `description:"OpenTracing configuration" export:"true"`
 	LogLevel                  string                  `short:"l" description:"Log level" export:"true"`
 	EntryPoints               EntryPoints             `description:"Entrypoints definition using format: --entryPoints='Name:http Address::8000 Redirect.EntryPoint:https' --entryPoints='Name:https Address::4442 TLS:tests/traefik.crt,tests/traefik.key;prod/traefik.crt,prod/traefik.key'" export:"true"`
 	Cluster                   *types.Cluster          `description:"Enable clustering" export:"true"`
@@ -79,7 +82,7 @@ type GlobalConfiguration struct {
 	File                      *file.Provider          `description:"Enable File backend with default settings" export:"true"`
 	Marathon                  *marathon.Provider      `description:"Enable Marathon backend with default settings" export:"true"`
 	Consul                    *consul.Provider        `description:"Enable Consul backend with default settings" export:"true"`
-	ConsulCatalog             *consul.CatalogProvider `description:"Enable Consul catalog backend with default settings" export:"true"`
+	ConsulCatalog             *consulcatalog.Provider `description:"Enable Consul catalog backend with default settings" export:"true"`
 	Etcd                      *etcd.Provider          `description:"Enable Etcd backend with default settings" export:"true"`
 	Zookeeper                 *zk.Provider            `description:"Enable Zookeeper backend with default settings" export:"true"`
 	Boltdb                    *boltdb.Provider        `description:"Enable Boltdb backend with default settings" export:"true"`
@@ -240,6 +243,23 @@ func (gc *GlobalConfiguration) SetEffectiveConfiguration(configFile string) {
 			log.Errorln("Error using file configuration backend, no filename defined")
 		}
 	}
+
+	if gc.ACME != nil {
+		// TODO: to remove in the futurs
+		if len(gc.ACME.StorageFile) > 0 && len(gc.ACME.Storage) == 0 {
+			log.Warn("ACME.StorageFile is deprecated, use ACME.Storage instead")
+			gc.ACME.Storage = gc.ACME.StorageFile
+		}
+
+		if len(gc.ACME.DNSProvider) > 0 {
+			log.Warn("ACME.DNSProvider is deprecated, use ACME.DNSChallenge instead")
+			gc.ACME.DNSChallenge = &acme.DNSChallenge{Provider: gc.ACME.DNSProvider, DelayBeforeCheck: gc.ACME.DelayDontCheckDNS}
+		}
+
+		if gc.ACME.OnDemand {
+			log.Warn("ACME.OnDemand is deprecated")
+		}
+	}
 }
 
 // DefaultEntryPoints holds default entry points
@@ -267,12 +287,12 @@ func (dep *DefaultEntryPoints) Set(value string) error {
 
 // Get return the EntryPoints map
 func (dep *DefaultEntryPoints) Get() interface{} {
-	return DefaultEntryPoints(*dep)
+	return *dep
 }
 
 // SetValue sets the EntryPoints map with val
 func (dep *DefaultEntryPoints) SetValue(val interface{}) {
-	*dep = DefaultEntryPoints(val.(DefaultEntryPoints))
+	*dep = val.(DefaultEntryPoints)
 }
 
 // Type is type of the struct
@@ -317,9 +337,9 @@ func (ep *EntryPoints) Set(value string) error {
 			Optional: optional,
 		}
 	}
-	var redirect *Redirect
+	var redirect *types.Redirect
 	if len(result["redirect_entrypoint"]) > 0 || len(result["redirect_regex"]) > 0 || len(result["redirect_replacement"]) > 0 {
-		redirect = &Redirect{
+		redirect = &types.Redirect{
 			EntryPoint:  result["redirect_entrypoint"],
 			Regex:       result["redirect_regex"],
 			Replacement: result["redirect_replacement"],
@@ -405,12 +425,12 @@ func toBool(conf map[string]string, key string) bool {
 
 // Get return the EntryPoints map
 func (ep *EntryPoints) Get() interface{} {
-	return EntryPoints(*ep)
+	return *ep
 }
 
 // SetValue sets the EntryPoints map with val
 func (ep *EntryPoints) SetValue(val interface{}) {
-	*ep = EntryPoints(val.(EntryPoints))
+	*ep = val.(EntryPoints)
 }
 
 // Type is type of the struct
@@ -422,20 +442,13 @@ func (ep *EntryPoints) Type() string {
 type EntryPoint struct {
 	Network              string
 	Address              string
-	TLS                  *tls.TLS    `export:"true"`
-	Redirect             *Redirect   `export:"true"`
-	Auth                 *types.Auth `export:"true"`
+	TLS                  *tls.TLS        `export:"true"`
+	Redirect             *types.Redirect `export:"true"`
+	Auth                 *types.Auth     `export:"true"`
 	WhitelistSourceRange []string
 	Compress             bool              `export:"true"`
 	ProxyProtocol        *ProxyProtocol    `export:"true"`
 	ForwardedHeaders     *ForwardedHeaders `export:"true"`
-}
-
-// Redirect configures a redirection of an entry point to another, or to an URL
-type Redirect struct {
-	EntryPoint  string
-	Regex       string
-	Replacement string
 }
 
 // Retry contains request retry config

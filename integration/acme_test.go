@@ -72,6 +72,36 @@ func (s *AcmeSuite) TestOnHostRuleRetrieveAcmeCertificate(c *check.C) {
 	s.retrieveAcmeCertificate(c, testCase)
 }
 
+// Test OnDemand option with none provided certificate and challenge HTTP-01
+func (s *AcmeSuite) TestOnDemandRetrieveAcmeCertificateHTTP01(c *check.C) {
+	testCase := AcmeTestCase{
+		traefikConfFilePath: "fixtures/acme/acme_http01.toml",
+		onDemand:            true,
+		domainToCheck:       acmeDomain}
+
+	s.retrieveAcmeCertificate(c, testCase)
+}
+
+// Test OnHostRule option with none provided certificate and challenge HTTP-01
+func (s *AcmeSuite) TestOnHostRuleRetrieveAcmeCertificateHTTP01(c *check.C) {
+	testCase := AcmeTestCase{
+		traefikConfFilePath: "fixtures/acme/acme_http01.toml",
+		onDemand:            false,
+		domainToCheck:       acmeDomain}
+
+	s.retrieveAcmeCertificate(c, testCase)
+}
+
+// Test OnHostRule option with none provided certificate and challenge HTTP-01 and web path
+func (s *AcmeSuite) TestOnHostRuleRetrieveAcmeCertificateHTTP01WithPath(c *check.C) {
+	testCase := AcmeTestCase{
+		traefikConfFilePath: "fixtures/acme/acme_http01_web.toml",
+		onDemand:            false,
+		domainToCheck:       acmeDomain}
+
+	s.retrieveAcmeCertificate(c, testCase)
+}
+
 // Test OnDemand option with a wildcard provided certificate
 func (s *AcmeSuite) TestOnDemandRetrieveAcmeCertificateWithWildcard(c *check.C) {
 	testCase := AcmeTestCase{
@@ -140,8 +170,8 @@ func (s *AcmeSuite) retrieveAcmeCertificate(c *check.C, testCase AcmeTestCase) {
 
 	// wait for traefik (generating acme account take some seconds)
 	err = try.Do(90*time.Second, func() error {
-		_, err := client.Get("https://127.0.0.1:5001")
-		return err
+		_, errGet := client.Get("https://127.0.0.1:5001")
+		return errGet
 	})
 	c.Assert(err, checker.IsNil)
 

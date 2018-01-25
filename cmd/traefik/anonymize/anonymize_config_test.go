@@ -11,6 +11,7 @@ import (
 	"github.com/containous/traefik/provider"
 	"github.com/containous/traefik/provider/boltdb"
 	"github.com/containous/traefik/provider/consul"
+	"github.com/containous/traefik/provider/consulcatalog"
 	"github.com/containous/traefik/provider/docker"
 	"github.com/containous/traefik/provider/dynamodb"
 	"github.com/containous/traefik/provider/ecs"
@@ -57,7 +58,7 @@ func TestDo_globalConfiguration(t *testing.T) {
 					Optional: false,
 				},
 			},
-			Redirect: &configuration.Redirect{
+			Redirect: &types.Redirect{
 				Replacement: "foo Replacement",
 				Regex:       "foo Regex",
 				EntryPoint:  "foo EntryPoint",
@@ -103,7 +104,7 @@ func TestDo_globalConfiguration(t *testing.T) {
 					Optional: false,
 				},
 			},
-			Redirect: &configuration.Redirect{
+			Redirect: &types.Redirect{
 				Replacement: "fii Replacement",
 				Regex:       "fii Regex",
 				EntryPoint:  "fii EntryPoint",
@@ -168,7 +169,7 @@ func TestDo_globalConfiguration(t *testing.T) {
 		OnHostRule:        true,
 		CAServer:          "CAServer",
 		EntryPoint:        "EntryPoint",
-		DNSProvider:       "DNSProvider",
+		DNSChallenge:      &acme.DNSChallenge{Provider: "DNSProvider"},
 		DelayDontCheckDNS: 666,
 		ACMELogging:       true,
 		TLSConfig: &tls.Config{
@@ -333,7 +334,7 @@ func TestDo_globalConfiguration(t *testing.T) {
 		},
 		RespectReadinessChecks: true,
 	}
-	config.ConsulCatalog = &consul.CatalogProvider{
+	config.ConsulCatalog = &consulcatalog.Provider{
 		BaseProvider: provider.BaseProvider{
 			Watch:    true,
 			Filename: "ConsulCatalog Filename",

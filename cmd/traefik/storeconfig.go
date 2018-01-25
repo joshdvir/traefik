@@ -5,11 +5,11 @@ import (
 	"fmt"
 	stdlog "log"
 
+	"github.com/abronan/valkeyrie/store"
 	"github.com/containous/flaeg"
 	"github.com/containous/staert"
 	"github.com/containous/traefik/acme"
 	"github.com/containous/traefik/cluster"
-	"github.com/docker/libkv/store"
 )
 
 func newStoreConfigCmd(traefikConfiguration *TraefikConfiguration, traefikPointersConfiguration *TraefikConfiguration) *flaeg.Command {
@@ -56,7 +56,7 @@ func runStoreConfig(kv *staert.KvSource, traefikConfiguration *TraefikConfigurat
 			}
 
 			stdlog.Printf("Storing file configuration: %s\n", jsonConf)
-			config, err := fileConfig.LoadConfig()
+			config, err := fileConfig.BuildConfiguration()
 			if err != nil {
 				return err
 			}
@@ -67,12 +67,21 @@ func runStoreConfig(kv *staert.KvSource, traefikConfiguration *TraefikConfigurat
 				return err
 			}
 		}
-		if traefikConfiguration.GlobalConfiguration.ACME != nil && len(traefikConfiguration.GlobalConfiguration.ACME.StorageFile) > 0 {
-			// convert ACME json file to KV store
-			localStore := acme.NewLocalStore(traefikConfiguration.GlobalConfiguration.ACME.StorageFile)
-			object, err := localStore.Load()
-			if err != nil {
-				return err
+		if traefikConfiguration.GlobalConfiguration.ACME != nil {
+			var object cluster.Object
+			if len(traefikConfiguration.GlobalConfiguration.ACME.StorageFile) > 0 {
+				// convert ACME json file to KV store
+				localStore := acme.NewLocalStore(traefikConfiguration.GlobalConfiguration.ACME.StorageFile)
+				object, err = localStore.Load()
+				if err != nil {
+					return err
+				}
+
+			} else {
+				// Create an empty account to create all the keys into the KV store
+				account := &acme.Account{}
+				account.Init()
+				object = account
 			}
 
 			meta := cluster.NewMetadata(object)
@@ -86,6 +95,11 @@ func runStoreConfig(kv *staert.KvSource, traefikConfiguration *TraefikConfigurat
 				Prefix: traefikConfiguration.GlobalConfiguration.ACME.Storage,
 			}
 			err = source.StoreConfig(meta)
+			if err != nil {
+				return err
+			}
+			// Force to delete storagefile
+			err = kv.Delete(kv.Prefix + "/acme/storagefile")
 			if err != nil {
 				return err
 			}

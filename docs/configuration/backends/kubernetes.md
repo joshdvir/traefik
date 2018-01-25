@@ -4,7 +4,6 @@ Træfik can be configured to use Kubernetes Ingress as a backend configuration.
 
 See also [Kubernetes user guide](/user-guide/kubernetes).
 
-
 ## Configuration
 
 ```toml
@@ -44,7 +43,7 @@ See also [Kubernetes user guide](/user-guide/kubernetes).
 #
 # namespaces = ["default", "production"]
 
-# Ingress label selector to identify Ingress objects that should be processed.
+# Ingress label selector to filter Ingress objects that should be processed.
 #
 # Optional
 # Default: empty (process all Ingresses)
@@ -75,77 +74,81 @@ See also [Kubernetes user guide](/user-guide/kubernetes).
 
 ### `endpoint`
 
-The Kubernetes server endpoint.
+The Kubernetes server endpoint as URL.
 
-When deployed as a replication controller in Kubernetes, Traefik will use the environment variables `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT` to construct the endpoint.
+When deployed into Kubernetes, Traefik will read the environment variables `KUBERNETES_SERVICE_HOST` and `KUBERNETES_SERVICE_PORT` to construct the endpoint.
 
-Secure token will be found in `/var/run/secrets/kubernetes.io/serviceaccount/token` and SSL CA cert in `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`
+The access token will be looked up in `/var/run/secrets/kubernetes.io/serviceaccount/token` and the SSL CA certificate in `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`.
+Both are provided mounted automatically when deployed inside Kubernetes.
 
-The endpoint may be given to override the environment variable values.
+The endpoint may be specified to override the environment variable values inside a cluster.
 
 When the environment variables are not found, Traefik will try to connect to the Kubernetes API server with an external-cluster client.
 In this case, the endpoint is required.
-Specifically, it may be set to the URL used by `kubectl proxy` to connect to a Kubernetes cluster from localhost.
+Specifically, it may be set to the URL used by `kubectl proxy` to connect to a Kubernetes cluster using the granted autentication and authorization of the associated kubeconfig.
 
 ### `labelselector`
 
-Ingress label selector to identify Ingress objects that should be processed.
+By default, Traefik processes all Ingress objects in the configured namespaces.
+A label selector can be defined to filter on specific Ingress objects only.
 
 See [label-selectors](https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#label-selectors) for details.
 
-
 ## Annotations
 
-Annotations can be used on containers to override default behaviour for the whole Ingress resource:
+### General annotations
 
-- `traefik.frontend.rule.type: PathPrefixStrip`  
+The following general annotations are applicable on the Ingress object:
+
+- `traefik.frontend.rule.type: PathPrefixStrip`
     Override the default frontend rule type. Default: `PathPrefix`.
 - `traefik.frontend.priority: "3"`
     Override the default frontend rule priority.
-- `traefik.frontend.redirect: https`:
+- `traefik.frontend.redirect.entryPoint: https`:
     Enables Redirect to another entryPoint for that frontend (e.g. HTTPS).
-- `traefik.frontend.entryPoints: http,https`  
+- `traefik.frontend.redirect.regex: ^http://localhost/(.*)`:
+    Redirect to another URL for that frontend. Must be set with `traefik.frontend.redirect.replacement`.
+- `traefik.frontend.redirect.replacement: http://mydomain/$1`:
+    Redirect to another URL for that frontend. Must be set with `traefik.frontend.redirect.regex`.
+- `traefik.frontend.entryPoints: http,https`
     Override the default frontend endpoints.
-- `traefik.frontend.passTLSCert: true`  
+- `traefik.frontend.passTLSCert: true`
     Override the default frontend PassTLSCert value. Default: `false`.
-
-Annotations can be used on the Kubernetes service to override default behaviour:
-
-- `traefik.backend.loadbalancer.method=drr`  
-    Override the default `wrr` load balancer algorithm
-- `traefik.backend.loadbalancer.stickiness=true`      
-    Enable backend sticky sessions
-- `traefik.backend.loadbalancer.stickiness.cookieName=NAME`      
-    Manually set the cookie name for sticky sessions
-- `traefik.backend.loadbalancer.sticky=true`      
-    Enable backend sticky sessions (DEPRECATED)
-
-Additionally, an annotation can be used on Kubernetes services to set the [circuit breaker expression](/basics/#backends) for a backend.
-
-- `traefik.backend.circuitbreaker: <expression>`  
-    Set the circuit breaker expression for the backend. Default: `nil`.
-
-As known from nginx when used as Kubernetes Ingress Controller, a list of IP-Ranges which are allowed to access can be configured by using an ingress annotation:
-
+- `ingress.kubernetes.io/rewrite-target: /users`
+    Replaces each matched Ingress path with the specified one, and adds the old path to the `X-Replaced-Path` header.
 - `ingress.kubernetes.io/whitelist-source-range: "1.2.3.0/24, fe80::/16"`
+    A comma-separated list of IP ranges permitted for access. all source IPs are permitted if the list is empty or a single range is ill-formatted.
 
-An unset or empty list allows all Source-IPs to access.
-If one of the Net-Specifications are invalid, the whole list is invalid and allows all Source-IPs to access.
+!!! note
+    Please note that `traefik.frontend.redirect.regex` and `traefik.frontend.redirect.replacement` do not have to be set if `traefik.frontend.redirect.entryPoint` is defined for the redirection (they will not be used in this case).
 
-#### Security annotations
+The following annotations are applicable on the Service object associated with a particular Ingress object:
 
-The following security annotations can be applied to the ingress object to add security features:
+- `traefik.backend.loadbalancer.method=drr`
+    Override the default `wrr` load balancer algorithm.
+- `traefik.backend.loadbalancer.stickiness=true`
+    Enable backend sticky sessions.
+- `traefik.backend.loadbalancer.stickiness.cookieName=NAME`
+    Manually set the cookie name for sticky sessions.
+- `traefik.backend.loadbalancer.sticky=true`
+    Enable backend sticky sessions (DEPRECATED).
+- `traefik.backend.circuitbreaker: <expression>`
+    Set the circuit breaker expression for the backend.
 
-| Annotation                                               | Description                                                                                                                                                                                         |
-|----------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+### Security annotations
+
+The following security annotations are applicable on the Ingress object:
+
+|                        Annotation                        |                                                                                             Description                                                                                             |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ingress.kubernetes.io/allowed-hosts:EXPR`               | Provides a list of allowed hosts that requests will be processed. Format: `Host1,Host2`                                                                                                             |
-| `ingress.kubernetes.io/custom-request-headers:EXPR `     | Provides the container with custom request headers that will be appended to each request forwarded to the container. Format:  `HEADER:value,HEADER2:value2`                                         |
-| `ingress.kubernetes.io/custom-response-headers:EXPR`     | Appends the headers to each response returned by the container, before forwarding the response to the client. Format:  `HEADER:value,HEADER2:value2`                                                |
-| `ingress.kubernetes.io/proxy-headers:EXPR `              | Provides a list of headers that the proxied hostname may be stored. Format:  `HEADER1,HEADER2`                                                                                                      |
+| `ingress.kubernetes.io/custom-request-headers:EXPR`      | Provides the container with custom request headers that will be appended to each request forwarded to the container. Format: <code>HEADER:value&vert;&vert;HEADER2:value2</code>                    |
+| `ingress.kubernetes.io/custom-response-headers:EXPR`     | Appends the headers to each response returned by the container, before forwarding the response to the client. Format: <code>HEADER:value&vert;&vert;HEADER2:value2</code>                           |
+| `ingress.kubernetes.io/proxy-headers:EXPR`               | Provides a list of headers that the proxied hostname may be stored. Format:  `HEADER1,HEADER2`                                                                                                      |
 | `ingress.kubernetes.io/ssl-redirect:true`                | Forces the frontend to redirect to SSL if a non-SSL request is sent.                                                                                                                                |
 | `ingress.kubernetes.io/ssl-temporary-redirect:true`      | Forces the frontend to redirect to SSL if a non-SSL request is sent, but by sending a 302 instead of a 301.                                                                                         |
 | `ingress.kubernetes.io/ssl-host:HOST`                    | This setting configures the hostname that redirects will be based on. Default is "", which is the same host as the request.                                                                         |
-| `ingress.kubernetes.io/ssl-proxy-headers:EXPR`           | Header combinations that would signify a proper SSL Request (Such as `X-Forwarded-For:https`). Format:  `HEADER:value,HEADER2:value2`                                                               |
+| `ingress.kubernetes.io/ssl-proxy-headers:EXPR`           | Header combinations that would signify a proper SSL Request (Such as `X-Forwarded-For:https`). Format: <code>HEADER:value&vert;&vert;HEADER2:value2</code>                                          |
 | `ingress.kubernetes.io/hsts-max-age:315360000`           | Sets the max-age of the HSTS header.                                                                                                                                                                |
 | `ngress.kubernetes.io/hsts-include-subdomains:true`      | Adds the IncludeSubdomains section of the STS  header.                                                                                                                                              |
 | `ingress.kubernetes.io/hsts-preload:true`                | Adds the preload flag to the HSTS  header.                                                                                                                                                          |
@@ -161,17 +164,17 @@ The following security annotations can be applied to the ingress object to add s
 
 ### Authentication
 
-Is possible to add additional authentication annotations in the Ingress rule.
-The source of the authentication is a secret that contains usernames and passwords inside the key auth.
+Is possible to add additional authentication annotations to the Ingress object.
+The source of the authentication is a Secret object that contains the credentials.
 
 - `ingress.kubernetes.io/auth-type`: `basic`
-- `ingress.kubernetes.io/auth-secret`: `mysecret`  
-    Contains the usernames and passwords with access to the paths defined in the Ingress Rule.
+    Contains the authentication type. The only permitted type is `basic`.
+- `ingress.kubernetes.io/auth-secret`: `mysecret`
+    Contains the username and password with access to the paths defined in the Ingress object.
 
-The secret must be created in the same namespace as the Ingress rule.
+The secret must be created in the same namespace as the Ingress object.
 
-Limitations:
+The following limitations hold:
 
-- Basic authentication only.
-- Realm not configurable; only `traefik` default.
-- Secret must contain only single file.
+- The realm is not configurable; the only supported (and default) value is `traefik`.
+- The Secret must contain a single file only.
