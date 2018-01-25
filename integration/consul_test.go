@@ -10,13 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/abronan/valkeyrie"
+	"github.com/abronan/valkeyrie/store"
+	"github.com/abronan/valkeyrie/store/consul"
 	"github.com/containous/staert"
 	"github.com/containous/traefik/cluster"
 	"github.com/containous/traefik/integration/try"
 	"github.com/containous/traefik/types"
-	"github.com/docker/libkv"
-	"github.com/docker/libkv/store"
-	"github.com/docker/libkv/store/consul"
 	"github.com/go-check/check"
 	checker "github.com/vdemeester/shakers"
 )
@@ -32,7 +32,7 @@ func (s *ConsulSuite) setupConsul(c *check.C) {
 	s.composeProject.Start(c)
 
 	consul.Register()
-	kv, err := libkv.NewStore(
+	kv, err := valkeyrie.NewStore(
 		store.CONSUL,
 		[]string{s.composeProject.Container(c, "consul").NetworkSettings.IPAddress + ":8500"},
 		&store.Config{
@@ -63,7 +63,7 @@ func (s *ConsulSuite) setupConsulTLS(c *check.C) {
 	TLSConfig, err := clientTLS.CreateTLSConfig()
 	c.Assert(err, checker.IsNil)
 
-	kv, err := libkv.NewStore(
+	kv, err := valkeyrie.NewStore(
 		store.CONSUL,
 		[]string{s.composeProject.Container(c, "consul").NetworkSettings.IPAddress + ":8585"},
 		&store.Config{
@@ -294,7 +294,10 @@ func (s *ConsulSuite) skipTestGlobalConfigurationWithClientTLS(c *check.C) {
 	s.setupConsulTLS(c)
 	consulHost := s.composeProject.Container(c, "consul").NetworkSettings.IPAddress
 
-	err := s.kv.Put("traefik/web/address", []byte(":8081"), nil)
+	err := s.kv.Put("traefik/api/entrypoint", []byte("api"), nil)
+	c.Assert(err, checker.IsNil)
+
+	err = s.kv.Put("traefik/entrypoints/api/address", []byte(":8081"), nil)
 	c.Assert(err, checker.IsNil)
 
 	// wait for consul
@@ -341,7 +344,7 @@ func (s *ConsulSuite) TestCommandStoreConfig(c *check.C) {
 		"/traefik/loglevel":                 "DEBUG",
 		"/traefik/defaultentrypoints/0":     "http",
 		"/traefik/entrypoints/http/address": ":8000",
-		"/traefik/web/address":              ":8080",
+		"/traefik/api/entrypoint":           "traefik",
 		"/traefik/consul/endpoint":          consulHost + ":8500",
 	}
 
@@ -561,15 +564,15 @@ func (s *ConsulSuite) TestSNIDynamicTlsConfig(c *check.C) {
 	}
 
 	tlsconfigure1 := map[string]string{
-		"traefik/tlsconfiguration/snitestcom/entrypoints":          "https",
-		"traefik/tlsconfiguration/snitestcom/certificate/keyfile":  string(snitestComKey),
-		"traefik/tlsconfiguration/snitestcom/certificate/certfile": string(snitestComCert),
+		"traefik/tls/snitestcom/entrypoints":          "https",
+		"traefik/tls/snitestcom/certificate/keyfile":  string(snitestComKey),
+		"traefik/tls/snitestcom/certificate/certfile": string(snitestComCert),
 	}
 
 	tlsconfigure2 := map[string]string{
-		"traefik/tlsconfiguration/snitestorg/entrypoints":          "https",
-		"traefik/tlsconfiguration/snitestorg/certificate/keyfile":  string(snitestOrgKey),
-		"traefik/tlsconfiguration/snitestorg/certificate/certfile": string(snitestOrgCert),
+		"traefik/tls/snitestorg/entrypoints":          "https",
+		"traefik/tls/snitestorg/certificate/keyfile":  string(snitestOrgKey),
+		"traefik/tls/snitestorg/certificate/certfile": string(snitestOrgCert),
 	}
 
 	// config backends,frontends and first tls keypair
@@ -610,7 +613,7 @@ func (s *ConsulSuite) TestSNIDynamicTlsConfig(c *check.C) {
 
 	// wait for consul
 	err = try.Do(60*time.Second, func() error {
-		_, err := s.kv.Get("traefik/tlsconfiguration/snitestcom/certificate/keyfile", nil)
+		_, err := s.kv.Get("traefik/tls/snitestcom/certificate/keyfile", nil)
 		return err
 	})
 	c.Assert(err, checker.IsNil)
@@ -639,7 +642,7 @@ func (s *ConsulSuite) TestSNIDynamicTlsConfig(c *check.C) {
 
 	// wait for consul
 	err = try.Do(60*time.Second, func() error {
-		_, err := s.kv.Get("traefik/tlsconfiguration/snitestorg/certificate/keyfile", nil)
+		_, err := s.kv.Get("traefik/tls/snitestorg/certificate/keyfile", nil)
 		return err
 	})
 	c.Assert(err, checker.IsNil)

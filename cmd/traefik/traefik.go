@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/cenk/backoff"
 	"github.com/containous/flaeg"
 	"github.com/containous/staert"
@@ -28,6 +27,7 @@ import (
 	"github.com/containous/traefik/types"
 	"github.com/containous/traefik/version"
 	"github.com/coreos/go-systemd/daemon"
+	"github.com/sirupsen/logrus"
 )
 
 func main() {
@@ -261,14 +261,14 @@ func stats(globalConfiguration *configuration.GlobalConfiguration) {
 Stats collection is enabled.
 Many thanks for contributing to Traefik's improvement by allowing us to receive anonymous information from your configuration.
 Help us improve Traefik by leaving this feature on :)
-More details on: https://docs.traefik.io/basic/#collected-data
+More details on: https://docs.traefik.io/basics/#collected-data
 `)
 		collect(globalConfiguration)
 	} else {
 		log.Info(`
 Stats collection is disabled.
 Help us improve Traefik by turning this feature on :)
-More details on: https://docs.traefik.io/basic/#collected-data
+More details on: https://docs.traefik.io/basics/#collected-data
 `)
 	}
 }

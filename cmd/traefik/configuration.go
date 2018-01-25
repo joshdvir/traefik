@@ -65,7 +65,8 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 	// TODO: Deprecated - default Metrics
 	defaultWeb.Metrics = &types.Metrics{
 		Prometheus: &types.Prometheus{
-			Buckets: types.Buckets{0.1, 0.3, 1.2, 5},
+			Buckets:    types.Buckets{0.1, 0.3, 1.2, 5},
+			EntryPoint: configuration.DefaultInternalEntryPointName,
 		},
 		Datadog: &types.Datadog{
 			Address:      "localhost:8125",
@@ -211,9 +212,10 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 		Backend:     "jaeger",
 		ServiceName: "traefik",
 		Jaeger: &jaeger.Config{
-			SamplingServerURL: "http://localhost:5778/sampling",
-			SamplingType:      "const",
-			SamplingParam:     1.0,
+			SamplingServerURL:  "http://localhost:5778/sampling",
+			SamplingType:       "const",
+			SamplingParam:      1.0,
+			LocalAgentHostPort: "127.0.0.1:6832",
 		},
 		Zipkin: &zipkin.Config{
 			HTTPEndpoint: "http://localhost:9411/api/v1/spans",
@@ -241,7 +243,7 @@ func NewTraefikDefaultPointersConfiguration() *TraefikConfiguration {
 	defaultMetrics := types.Metrics{
 		Prometheus: &types.Prometheus{
 			Buckets:    types.Buckets{0.1, 0.3, 1.2, 5},
-			EntryPoint: "traefik",
+			EntryPoint: configuration.DefaultInternalEntryPointName,
 		},
 		Datadog: &types.Datadog{
 			Address:      "localhost:8125",

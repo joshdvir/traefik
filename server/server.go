@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/armon/go-proxyproto"
 	"github.com/containous/mux"
 	"github.com/containous/traefik/cluster"
@@ -40,6 +39,7 @@ import (
 	"github.com/containous/traefik/types"
 	"github.com/containous/traefik/whitelist"
 	"github.com/eapache/channels"
+	"github.com/sirupsen/logrus"
 	thoas_stats "github.com/thoas/stats"
 	"github.com/urfave/negroni"
 	"github.com/vulcand/oxy/connlimit"
@@ -67,6 +67,7 @@ type Server struct {
 	stopChan                      chan bool
 	providers                     []provider.Provider
 	currentConfigurations         safe.Safe
+	providerConfigUpdateMap       map[string]chan types.ConfigMessage
 	globalConfiguration           configuration.GlobalConfiguration
 	accessLoggerMiddleware        *accesslog.LogHandler
 	tracingMiddleware             *tracing.Tracing
@@ -107,6 +108,7 @@ func NewServer(globalConfiguration configuration.GlobalConfiguration) *Server {
 	server.configureSignals()
 	currentConfigurations := make(types.Configurations)
 	server.currentConfigurations.Set(currentConfigurations)
+	server.providerConfigUpdateMap = make(map[string]chan types.ConfigMessage)
 	server.globalConfiguration = globalConfiguration
 	if server.globalConfiguration.API != nil {
 		server.globalConfiguration.API.CurrentConfigurations = &server.currentConfigurations
@@ -362,25 +364,25 @@ func (s *Server) listenProviders(stop chan bool) {
 }
 
 func (s *Server) preLoadConfiguration(configMsg types.ConfigMessage) {
-	providerConfigUpdateMap := map[string]chan types.ConfigMessage{}
 	providersThrottleDuration := time.Duration(s.globalConfiguration.ProvidersThrottleDuration)
 	s.defaultConfigurationValues(configMsg.Configuration)
 	currentConfigurations := s.currentConfigurations.Get().(types.Configurations)
 	jsonConf, _ := json.Marshal(configMsg.Configuration)
 	log.Debugf("Configuration received from provider %s: %s", configMsg.ProviderName, string(jsonConf))
-	if configMsg.Configuration == nil || configMsg.Configuration.Backends == nil && configMsg.Configuration.Frontends == nil && configMsg.Configuration.TLSConfiguration == nil {
+	if configMsg.Configuration == nil || configMsg.Configuration.Backends == nil && configMsg.Configuration.Frontends == nil && configMsg.Configuration.TLS == nil {
 		log.Infof("Skipping empty Configuration for provider %s", configMsg.ProviderName)
 	} else if reflect.DeepEqual(currentConfigurations[configMsg.ProviderName], configMsg.Configuration) {
 		log.Infof("Skipping same configuration for provider %s", configMsg.ProviderName)
 	} else {
-		if _, ok := providerConfigUpdateMap[configMsg.ProviderName]; !ok {
-			providerConfigUpdate := make(chan types.ConfigMessage)
-			providerConfigUpdateMap[configMsg.ProviderName] = providerConfigUpdate
+		providerConfigUpdateCh, ok := s.providerConfigUpdateMap[configMsg.ProviderName]
+		if !ok {
+			providerConfigUpdateCh = make(chan types.ConfigMessage)
+			s.providerConfigUpdateMap[configMsg.ProviderName] = providerConfigUpdateCh
 			s.routinesPool.Go(func(stop chan bool) {
-				throttleProviderConfigReload(providersThrottleDuration, s.configurationValidatedChan, providerConfigUpdate, stop)
+				throttleProviderConfigReload(providersThrottleDuration, s.configurationValidatedChan, providerConfigUpdateCh, stop)
 			})
 		}
-		providerConfigUpdateMap[configMsg.ProviderName] <- configMsg
+		providerConfigUpdateCh <- configMsg
 	}
 }
 
@@ -472,8 +474,8 @@ func (s *Server) loadHTTPSConfiguration(configurations types.Configurations, def
 	newEPCertificates := make(map[string]*traefikTls.DomainsCertificates)
 	// Get all certificates
 	for _, configuration := range configurations {
-		if configuration.TLSConfiguration != nil && len(configuration.TLSConfiguration) > 0 {
-			if err := traefikTls.SortTLSConfigurationPerEntryPoints(configuration.TLSConfiguration, newEPCertificates, defaultEntryPoints); err != nil {
+		if configuration.TLS != nil && len(configuration.TLS) > 0 {
+			if err := traefikTls.SortTLSPerEntryPoints(configuration.TLS, newEPCertificates, defaultEntryPoints); err != nil {
 				return nil, err
 			}
 		}
@@ -772,6 +774,12 @@ func (s *Server) addInternalPublicRoutes(entryPointName string, router *mux.Rout
 	}
 }
 
+func (s *Server) addACMERoutes(entryPointName string, router *mux.Router) {
+	if s.globalConfiguration.ACME != nil && s.globalConfiguration.ACME.HTTPChallenge != nil && s.globalConfiguration.ACME.HTTPChallenge.EntryPoint == entryPointName {
+		s.globalConfiguration.ACME.AddRoutes(router)
+	}
+}
+
 func (s *Server) prepareServer(entryPointName string, entryPoint *configuration.EntryPoint, router *middlewares.HandlerSwitcher, middlewares []negroni.Handler, internalMiddlewares []negroni.Handler) (*http.Server, net.Listener, error) {
 	readTimeout, writeTimeout, idleTimeout := buildServerTimeouts(s.globalConfiguration)
 	log.Infof("Preparing server %s %+v with readTimeout=%s writeTimeout=%s idleTimeout=%s", entryPointName, entryPoint, readTimeout, writeTimeout, idleTimeout)
@@ -847,6 +855,9 @@ func (s *Server) buildInternalRouter(entryPointName, path string, internalMiddle
 	internalMuxRouter.Walk(wrapRoute(internalMiddlewares))
 
 	s.addInternalPublicRoutes(entryPointName, internalMuxSubrouter)
+
+	s.addACMERoutes(entryPointName, internalMuxRouter)
+
 	return internalMuxRouter
 }
 

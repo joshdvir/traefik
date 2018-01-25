@@ -70,10 +70,13 @@ logLevel = "DEBUG"
 defaultEntryPoints = ["http", "https"]
 
 [entryPoints]
+  [entryPoints.api]
+    address = ":8081"
   [entryPoints.http]
   address = ":80"
   [entryPoints.https]
   address = ":443"
+  
     [entryPoints.https.tls]
       [[entryPoints.https.tls.certificates]]
       certFile = "integration/fixtures/https/snitest.com.cert"
@@ -94,8 +97,8 @@ defaultEntryPoints = ["http", "https"]
   watch = true
   prefix = "traefik"
 
-[web]
-  address = ":8081"
+[api]
+  entrypoint = "api"
 ```
 
 And there, the same global configuration in the Key-value Store (using `prefix = "traefik"`):
@@ -105,6 +108,7 @@ And there, the same global configuration in the Key-value Store (using `prefix =
 | `/traefik/loglevel`                                       | `DEBUG`                                                       |
 | `/traefik/defaultentrypoints/0`                           | `http`                                                        |
 | `/traefik/defaultentrypoints/1`                           | `https`                                                       |
+| `/traefik/entrypoints/api/address`                        | `:8081`                                                       |
 | `/traefik/entrypoints/http/address`                       | `:80`                                                         |
 | `/traefik/entrypoints/https/address`                      | `:443`                                                        |
 | `/traefik/entrypoints/https/tls/certificates/0/certfile`  | `integration/fixtures/https/snitest.com.cert`                 |
@@ -115,7 +119,7 @@ And there, the same global configuration in the Key-value Store (using `prefix =
 | `/traefik/consul/endpoint`                                | `127.0.0.1:8500`                                              |
 | `/traefik/consul/watch`                                   | `true`                                                        |
 | `/traefik/consul/prefix`                                  | `traefik`                                                     |
-| `/traefik/web/address`                                    | `:8081`                                                       |
+| `/traefik/api/entrypoint`                                 | `api`                                                         |
 
 In case you are setting key values manually:
 
@@ -270,13 +274,14 @@ Here is the toml configuration we would like to store in the store :
   backend = "backend2"
   rule = "Path:/test"
 
-[[tlsConfiguration]]
-  [tlsConfiguration.certificate]
+[[tls]]
+  [tls.certificate]
     certFile = "path/to/your.cert"
     keyFile = "path/to/your.key"
-[[tlsConfiguration]]
-entryPoints = ["https","other-https"]
-  [tlsConfiguration.certificate]
+
+[[tls]]
+  entryPoints = ["https","other-https"]
+  [tls.certificate]
     certFile = """-----BEGIN CERTIFICATE-----
                       <cert file content>
                       -----END CERTIFICATE-----"""
@@ -330,21 +335,21 @@ And there, the same dynamic configuration in a KV Store (using `prefix = "traefi
 
 - certificate 1
 
-| Key                                                | Value              |
-|----------------------------------------------------|--------------------|
-| `/traefik/tlsconfiguration/1/certificate/certfile` | `path/to/your.cert`|
-| `/traefik/tlsconfiguration/1/certificate/keyfile`  | `path/to/your.key` |
+| Key                                   | Value              |
+|---------------------------------------|--------------------|
+| `/traefik/tls/1/certificate/certfile` | `path/to/your.cert`|
+| `/traefik/tls/1/certificate/keyfile`  | `path/to/your.key` |
 
 !!! note
-    As `/traefik/tlsconfiguration/1/entrypoints` is not defined, the certificate will be attached to all `defaulEntryPoints` with a TLS configuration (in the example, the entryPoint `https`)
+    As `/traefik/tls/1/entrypoints` is not defined, the certificate will be attached to all `defaulEntryPoints` with a TLS configuration (in the example, the entryPoint `https`)
 
 - certificate 2
 
-| Key                                                | Value                 |
-|----------------------------------------------------|-----------------------|
-| `/traefik/tlsconfiguration/2/entrypoints`          | `https,other-https`   |
-| `/traefik/tlsconfiguration/2/certificate/certfile` | `<cert file content>` |
-| `/traefik/tlsconfiguration/2/certificate/certfile` | `<key file content>`  |
+| Key                                   | Value                 |
+|---------------------------------------|-----------------------|
+| `/traefik/tls/2/entrypoints`          | `https,other-https`   |
+| `/traefik/tls/2/certificate/certfile` | `<cert file content>` |
+| `/traefik/tls/2/certificate/certfile` | `<key file content>`  |
 
 ### Atomic configuration changes
 
@@ -405,7 +410,7 @@ Here, we have a 50% balance between the `http://172.17.0.3:80` and the `http://1
 ## Store configuration in Key-value store
 
 !!! note
-    Don't forget to [setup the connection between Træfik and Key-value store](/user-guide/kv-config/#launch-trfk).
+    Don't forget to [setup the connection between Træfik and Key-value store](/user-guide/kv-config/#launch-trfik).
 
 The static Træfik configuration in a key-value store can be automatically created and updated, using the [`storeconfig` subcommand](/basics/#commands).
 
@@ -413,7 +418,7 @@ The static Træfik configuration in a key-value store can be automatically creat
 traefik storeconfig [flags] ...
 ```
 This command is here only to automate the [process which upload the configuration into the Key-value store](/user-guide/kv-config/#upload-the-configuration-in-the-key-value-store).
-Træfik will not start but the [static configuration](/basics/#static-trfk-configuration) will be uploaded into the Key-value store.  
+Træfik will not start but the [static configuration](/basics/#static-trfik-configuration) will be uploaded into the Key-value store.  
 
 If you configured ACME (Let's Encrypt), your registration account and your certificates will also be uploaded.
 

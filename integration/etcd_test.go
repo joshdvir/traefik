@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abronan/valkeyrie"
+	"github.com/abronan/valkeyrie/store"
+	"github.com/abronan/valkeyrie/store/etcd/v2"
 	"github.com/containous/traefik/integration/try"
-	"github.com/docker/libkv"
-	"github.com/docker/libkv/store"
-	"github.com/docker/libkv/store/etcd/v2"
 	"github.com/go-check/check"
 
 	checker "github.com/vdemeester/shakers"
@@ -29,7 +29,7 @@ func (s *EtcdSuite) SetUpTest(c *check.C) {
 
 	etcd.Register()
 	url := s.composeProject.Container(c, "etcd").NetworkSettings.IPAddress + ":2379"
-	kv, err := libkv.NewStore(
+	kv, err := valkeyrie.NewStore(
 		store.ETCD,
 		[]string{url},
 		&store.Config{
@@ -419,7 +419,7 @@ func (s *EtcdSuite) TestCommandStoreConfig(c *check.C) {
 		"/traefik/loglevel":                 "DEBUG",
 		"/traefik/defaultentrypoints/0":     "http",
 		"/traefik/entrypoints/http/address": ":8000",
-		"/traefik/web/address":              ":8080",
+		"/traefik/api/entrypoint":           "traefik",
 		"/traefik/etcd/endpoint":            etcdHost + ":4001",
 	}
 
@@ -490,15 +490,15 @@ func (s *EtcdSuite) TestSNIDynamicTlsConfig(c *check.C) {
 	}
 
 	tlsconfigure1 := map[string]string{
-		"/traefik/tlsconfiguration/snitestcom/entrypoints":          "https",
-		"/traefik/tlsconfiguration/snitestcom/certificate/keyfile":  string(snitestComKey),
-		"/traefik/tlsconfiguration/snitestcom/certificate/certfile": string(snitestComCert),
+		"/traefik/tls/snitestcom/entrypoints":          "https",
+		"/traefik/tls/snitestcom/certificate/keyfile":  string(snitestComKey),
+		"/traefik/tls/snitestcom/certificate/certfile": string(snitestComCert),
 	}
 
 	tlsconfigure2 := map[string]string{
-		"/traefik/tlsconfiguration/snitestorg/entrypoints":          "https",
-		"/traefik/tlsconfiguration/snitestorg/certificate/keyfile":  string(snitestOrgKey),
-		"/traefik/tlsconfiguration/snitestorg/certificate/certfile": string(snitestOrgCert),
+		"/traefik/tls/snitestorg/entrypoints":          "https",
+		"/traefik/tls/snitestorg/certificate/keyfile":  string(snitestOrgKey),
+		"/traefik/tls/snitestorg/certificate/certfile": string(snitestOrgCert),
 	}
 
 	// config backends,frontends and first tls keypair
@@ -539,7 +539,7 @@ func (s *EtcdSuite) TestSNIDynamicTlsConfig(c *check.C) {
 
 	// wait for etcd
 	err = try.Do(60*time.Second, func() error {
-		_, err := s.kv.Get("/traefik/tlsconfiguration/snitestcom/certificate/keyfile", nil)
+		_, err := s.kv.Get("/traefik/tls/snitestcom/certificate/keyfile", nil)
 		return err
 	})
 	c.Assert(err, checker.IsNil)
@@ -573,7 +573,7 @@ func (s *EtcdSuite) TestSNIDynamicTlsConfig(c *check.C) {
 
 	// wait for etcd
 	err = try.Do(60*time.Second, func() error {
-		_, err := s.kv.Get("/traefik/tlsconfiguration/snitestorg/certificate/keyfile", nil)
+		_, err := s.kv.Get("/traefik/tls/snitestorg/certificate/keyfile", nil)
 		return err
 	})
 	c.Assert(err, checker.IsNil)

@@ -88,6 +88,7 @@ pages:
     - 'API / Dashboard': 'configuration/api.md'
     - 'Ping': 'configuration/ping.md'
     - 'Metrics': 'configuration/metrics.md'
+    - 'Tracing': 'configuration/tracing.md'
   - User Guides:
     - 'Configuration Examples': 'user-guide/examples.md'
     - 'Swarm Mode Cluster': 'user-guide/swarm-mode.md'
@@ -100,4 +101,3 @@ pages:
     - 'gRPC Example': 'user-guide/grpc.md'
     - 'Traefik cluster example with Swarm': 'user-guide/cluster-docker-consul.md'
   - Benchmarks: benchmarks.md
-  - 'Archive': 'archive.md'

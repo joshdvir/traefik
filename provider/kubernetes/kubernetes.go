@@ -82,11 +82,11 @@ func (p *Provider) newK8sClient() (Client, error) {
 	}
 
 	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" && os.Getenv("KUBERNETES_SERVICE_PORT") != "" {
-		log.Infof("Creating in-cluster Provider client%s\n", withEndpoint)
+		log.Infof("Creating in-cluster Provider client%s", withEndpoint)
 		return NewInClusterClient(p.Endpoint)
 	}
 
-	log.Infof("Creating cluster-external Provider client%s\n", withEndpoint)
+	log.Infof("Creating cluster-external Provider client%s", withEndpoint)
 	return NewExternalClusterClient(p.Endpoint, p.Token, p.CertAuthFilePath)
 }
 
@@ -175,12 +175,12 @@ func (p *Provider) loadIngresses(k8sClient Client) (*types.Configuration, error)
 			continue
 		}
 
-		tlsConfigs, err := getTLSConfigurations(i, k8sClient)
+		tlsSection, err := getTLS(i, k8sClient)
 		if err != nil {
 			log.Errorf("Error configuring TLS for ingress %s/%s: %v", i.Namespace, i.Name, err)
 			continue
 		}
-		templateObjects.TLSConfiguration = append(templateObjects.TLSConfiguration, tlsConfigs...)
+		templateObjects.TLS = append(templateObjects.TLS, tlsSection...)
 
 		for _, r := range i.Spec.Rules {
 			if r.HTTP == nil {
@@ -449,7 +449,7 @@ func loadAuthCredentials(namespace, secretName string, k8sClient Client) ([]stri
 	return creds, nil
 }
 
-func getTLSConfigurations(ingress *v1beta1.Ingress, k8sClient Client) ([]*tls.Configuration, error) {
+func getTLS(ingress *v1beta1.Ingress, k8sClient Client) ([]*tls.Configuration, error) {
 	var tlsConfigs []*tls.Configuration
 
 	for _, t := range ingress.Spec.TLS {
